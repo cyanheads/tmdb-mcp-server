@@ -1,8 +1,8 @@
 {
   "name": "@cyanheads/tmdb-mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "mcpName": "io.github.cyanheads/tmdb-mcp-server",
-  "description": "MCP server for The Movie Database (TMDB) — search movies, TV, and people; full credits, ratings, trailers, images, recommendations, and region-aware streaming availability.",
+  "description": "Search movies, TV, and people on The Movie Database (TMDB) — credits, ratings, trailers, images, recommendations, and region-aware streaming availability via MCP. STDIO or Streamable HTTP.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

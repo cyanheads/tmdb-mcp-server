@@ -1,7 +1,7 @@
 {
   "name": "tmdb-mcp-server",
-  "version": "0.1.0",
-  "description": "MCP server for The Movie Database (TMDB) — search movies, TV, and people; full credits, ratings, trailers, images, recommendations, and region-aware streaming availability.",
+  "version": "0.1.1",
+  "description": "Search movies, TV, and people on The Movie Database (TMDB) — credits, ratings, trailers, images, recommendations, and region-aware streaming availability via MCP. STDIO or Streamable HTTP.",
   "author": {
     "name": "cyanheads"
   },
