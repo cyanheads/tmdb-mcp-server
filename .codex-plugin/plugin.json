@@ -1,0 +1,25 @@
+{
+  "name": "tmdb-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for The Movie Database (TMDB) — search movies, TV, and people; full credits, ratings, trailers, images, recommendations, and region-aware streaming availability.",
+  "author": {
+    "name": "cyanheads",
+    "email": "casey@caseyjhand.com",
+    "url": "https://github.com/cyanheads"
+  },
+  "homepage": "https://github.com/cyanheads/tmdb-mcp-server",
+  "repository": "https://github.com/cyanheads/tmdb-mcp-server",
+  "license": "Apache-2.0",
+  "keywords": ["mcp", "mcp-server", "model-context-protocol", "tmdb", "movies", "tv", "film", "streaming"],
+  "mcpServers": "./.codex-plugin/mcp.json",
+  "interface": {
+    "displayName": "tmdb-mcp-server",
+    "shortDescription": "Movie, TV, and people metadata via The Movie Database (TMDB).",
+    "longDescription": "Read-only access to The Movie Database (TMDB): search movies, TV shows, and people; full credits, ratings, trailers, images, recommendations, keyword and genre data, trending, filtered discovery, and region-aware streaming availability (JustWatch). Image paths resolve to full URLs and genre IDs resolve to names.",
+    "developerName": "cyanheads",
+    "category": "data",
+    "capabilities": ["Read"],
+    "websiteURL": "https://github.com/cyanheads/tmdb-mcp-server",
+    "defaultPrompt": []
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "tmdb-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for The Movie Database (TMDB) — search movies, TV, and people; full credits, ratings, trailers, images, recommendations, and region-aware streaming availability.",
+  "author": {
+    "name": "cyanheads"
+  },
+  "homepage": "https://github.com/cyanheads/tmdb-mcp-server",
+  "repository": "https://github.com/cyanheads/tmdb-mcp-server",
+  "license": "Apache-2.0",
+  "mcpServers": {
+    "tmdb-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@cyanheads/tmdb-mcp-server"],
+      "env": {
+        "MCP_TRANSPORT_TYPE": "stdio",
+        "TMDB_API_KEY": "${TMDB_API_KEY}"
+      }
+    }
+  }
+}

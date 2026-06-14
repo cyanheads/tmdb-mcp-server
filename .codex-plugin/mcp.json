@@ -1,0 +1,10 @@
+{
+  "tmdb-mcp-server": {
+    "command": "npx",
+    "args": ["-y", "@cyanheads/tmdb-mcp-server"],
+    "env": {
+      "MCP_TRANSPORT_TYPE": "stdio",
+      "TMDB_API_KEY": "${TMDB_API_KEY}"
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "manifest_version": "0.3",
+  "name": "tmdb-mcp-server",
+  "display_name": "tmdb-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for The Movie Database (TMDB) — search movies, TV, and people; full credits, ratings, trailers, images, recommendations, and region-aware streaming availability.",
+  "author": { "name": "cyanheads", "url": "https://github.com/cyanheads" },
+  "repository": { "type": "git", "url": "https://github.com/cyanheads/tmdb-mcp-server" },
+  "homepage": "https://github.com/cyanheads/tmdb-mcp-server",
+  "documentation": "https://github.com/cyanheads/tmdb-mcp-server#readme",
+  "license": "Apache-2.0",
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "MCP_TRANSPORT_TYPE": "stdio",
+        "MCP_AUTH_MODE": "none",
+        "NODE_ENV": "production",
+        "TMDB_API_KEY": "${user_config.tmdb_api_key}",
+        "TMDB_LANGUAGE": "${user_config.tmdb_language}",
+        "TMDB_DEFAULT_REGION": "${user_config.tmdb_default_region}"
+      }
+    }
+  },
+  "compatibility": {
+    "runtimes": { "node": ">=24.0.0" }
+  },
+  "tools_generated": true,
+  "prompts_generated": true,
+  "user_config": {
+    "tmdb_api_key": {
+      "type": "string",
+      "title": "TMDB API Read Access Token",
+      "description": "TMDB v4 API Read Access Token (JWT). Sent as 'Authorization: Bearer'. Create one at https://www.themoviedb.org/settings/api.",
+      "sensitive": true,
+      "required": true
+    },
+    "tmdb_language": {
+      "type": "string",
+      "title": "Default Language",
+      "description": "Default response language as ISO 639-1, optionally with region (e.g. 'en-US'). Per-call language overrides it.",
+      "default": "en-US",
+      "required": false
+    },
+    "tmdb_default_region": {
+      "type": "string",
+      "title": "Default Region",
+      "description": "Default ISO 3166-1 country hint (e.g. 'US') used in region-aware error messages.",
+      "default": "US",
+      "required": false
+    }
+  }
+}
