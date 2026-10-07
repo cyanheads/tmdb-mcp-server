@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.3-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/tmdb-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/tmdb-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/tmdb-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.1.3-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/tmdb-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.2.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/tmdb-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/tmdb-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.2%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -53,9 +53,8 @@ All resource data is also reachable via tools — the three resources are conven
 ### `tmdb_search_titles` <sub>tool</sub>
 
 - `multi` mode (default) mixes movies, shows, and people, each result tagged with `media_type`; `movie`/`tv`/`person` restrict to one type and enable type-specific ranking
-- Optional `year` filter (movie/tv modes), `language` override, `include_adult` toggle, and `page` for paging past the first 20
+- Optional `year` filter (movie/tv modes), `language` override, `include_adult` toggle, and `page` for paging past the first 20. Empty results return normally with recovery guidance.
 - Each result carries `id`, `media_type`, title/name, `release_year`, `overview`, `vote_average`, resolved `genre_names`, and the relevant poster/profile URL
-- An empty result set is a valid answer, returned with recovery guidance — not an error
 
 ---
 
@@ -95,17 +94,15 @@ All resource data is also reachable via tools — the three resources are conven
 
 - Filter by `with_genres`/`without_genres`, exact `year` or a `release_date_gte`/`lte` window, `vote_average` range, `vote_count_gte` floor, `with_cast`/`with_crew` (movie), `with_networks` (tv), `with_watch_providers` + `watch_region`, `with_original_language`, and `runtime` range
 - Sort by popularity, revenue, vote average, vote count, or release date. Pair `vote_average.desc` with `vote_count_gte` (~100–1000) so a 10.0-from-3-votes title does not dominate
-- `with_cast`/`with_crew` are movie-only and `with_networks` is tv-only on TMDB; the tool accepts them for both `media_type` values and no-ops the inapplicable ones with a notice
-- `with_watch_providers` requires a `watch_region` — streaming availability is region-specific. Omitting the region returns a typed `region_required` error
+- `with_cast`/`with_crew` are movie-only and `with_networks` is tv-only; inapplicable filters produce a notice. `with_watch_providers` requires `watch_region`; omitting it returns `region_required`.
 
 ---
 
 ### `tmdb_get_trending` <sub>tool</sub>
 
 - `media_type`: `all` (default) mixes movies, shows, and people, each tagged with `media_type`; or restrict to one type
-- `time_window`: `day` (more volatile) or `week` (default, steadier)
+- `time_window`: `day` (more volatile) or `week` (default, steadier). Empty results return normally with recovery guidance.
 - Results are the same ranked summary cards as search and discover, up to 20 per page, with `page` for paging
-- An empty result set returns with recovery guidance, not an error
 
 ---
 
@@ -113,8 +110,7 @@ All resource data is also reachable via tools — the three resources are conven
 
 - Returns flatrate (subscription), rent, buy, ads (ad-supported free), and free provider lists with logo URLs, plus the TMDB JustWatch-backed `link` — the supported path to actual deep links
 - A `watch_region` (ISO 3166-1 alpha-2) is required: availability is region-specific and there is no global answer; the response always carries a region caveat
-- An empty result for a region is a valid "not available to stream here" answer, not an error
-- Provider ids in the result feed back into `tmdb_discover_titles` `with_watch_providers`
+- An empty region result is a valid "not available to stream here" answer. Provider ids feed into `tmdb_discover_titles` `with_watch_providers`.
 
 ---
 
@@ -227,8 +223,6 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 TMDB_API_KEY=... bun run start:http
 # Server listens at http://localhost:3010/mcp
 ```
 
-Refer to "your MCP client configuration file" generically — different clients use different config paths, and this server isn't client-specific.
-
 ### Prerequisites
 
 - [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
@@ -274,8 +268,10 @@ All configuration is validated at startup via Zod schemas. Key environment varia
 | `MCP_HTTP_PORT` | Port for the HTTP server. | `3010` |
 | `MCP_AUTH_MODE` | Auth mode: `none`, `jwt`, or `oauth`. | `none` |
 | `MCP_LOG_LEVEL` | Log level (RFC 5424). | `info` |
+| `LOG_TOOL_FAILURE_PAYLOADS` | Log failed tool arguments and results, redacted by key name and capped at `LOG_TOOL_FAILURE_PAYLOAD_MAX_BYTES` (default `16384`). Free-form values may contain secrets. | `false` |
 | `STORAGE_PROVIDER_TYPE` | Storage backend. | `in-memory` |
 | `OTEL_ENABLED` | Enable [OpenTelemetry instrumentation](https://github.com/cyanheads/mcp-ts-core/tree/main/docs/telemetry) (spans, metrics, completion logs). | `false` |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | Opt-in OTLP log endpoint; `OTEL_EXPORTER_OTLP_ENDPOINT` enables traces and metrics only. | — |
 
 See [`.env.example`](./.env.example) for the full list of optional overrides.
 

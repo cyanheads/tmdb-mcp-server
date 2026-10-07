@@ -1,6 +1,6 @@
 # tmdb-mcp-server - Directory Structure
 
-Generated on: 2026-09-20 21:25:00
+Generated on: 2026-10-07 12:31:43
 
 ```text
 tmdb-mcp-server/
@@ -126,9 +126,11 @@ tmdb-mcp-server/
 │   ├── clean-mcpb.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
+│   ├── install-otel.ts
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
+│   ├── prune-musl-packages.ts
 │   ├── release-github.ts
 │   └── tree.ts
 ├── src/
