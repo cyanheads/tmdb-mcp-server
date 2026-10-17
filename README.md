@@ -46,78 +46,75 @@ Movie and TV metadata powered by The Movie Database (TMDB). Search titles and pe
 | `tmdb://tv/{series_id}` | Show detail by id — the same enriched record as `tmdb_get_show`. |
 | `tmdb://person/{person_id}` | Person detail with the first 50 cast and 50 crew credits and full totals; use `tmdb_get_person` for further pages. |
 
-All resource data is also reachable via tools — the three resources are convenience wrappers over the detail service methods, so tool-only clients lose nothing.
-
 ## Capability reference
 
 ### `tmdb_search_titles` <sub>tool</sub>
 
-- `multi` mode (default) mixes movies, shows, and people, each result tagged with `media_type`; `movie`/`tv`/`person` restrict to one type and enable type-specific ranking
-- Optional `year` filter (movie/tv modes), `language` override, `include_adult` toggle, and `page` for paging past the first 20. Empty results return normally with recovery guidance.
-- Each result carries `id`, `media_type`, title/name, `release_year`, `overview`, `vote_average`, resolved `genre_names`, and the relevant poster/profile URL
+- `multi` mode (default) mixes movies, shows, and people, tagged with `media_type`; `movie`, `tv`, or `person` restrict to one type
+- Optional `year` (movie/tv modes), `language`, `include_adult`, and `page`; empty results return normally with recovery guidance
+- Each result carries `id`, `media_type`, title/name, `release_year`, `overview`, `vote_average`, `genre_names`, and a poster or profile URL
 
 ---
 
 ### `tmdb_get_movie` <sub>tool</sub>
 
-- Folds credits, videos, recommendations, similar, keywords, external ids, and release dates into one call via `append_to_response` — trim the `append` array to shrink the payload (e.g. `["credits"]` for cast only)
-- US theatrical certification extracted from the `release_dates` namespace; top-billed cast and key crew (Director/Writer/Screenplay/Producer); YouTube trailers with watch URLs
-- Does not include streaming availability — that is region-specific; use `tmdb_get_watch_providers`
+- Returns credits, videos, recommendations, similar, keywords, external ids, and release dates in one call; trim the `append` array (e.g. `["credits"]`) to shrink the payload
+- Includes US certification, top-billed cast, key crew, and YouTube trailers with watch URLs
+- No streaming availability; use `tmdb_get_watch_providers`
 
 ---
 
 ### `tmdb_get_show` <sub>tool</sub>
 
-- Same `append_to_response` set as `tmdb_get_movie`, with `content_ratings` (US TV rating) in place of `release_dates`
+- Same `append` options as `tmdb_get_movie`, with `content_ratings` (US TV rating) in place of `release_dates`
 - Adds season summaries, creators, networks, and the last/next episode to air
-- Pass a `season_number` from `seasons[]` to `tmdb_get_season` for the episode list
+- Pass a `season_number` from `seasons[]` to `tmdb_get_season` for episodes
 
 ---
 
 ### `tmdb_get_season` <sub>tool</sub>
 
-- Per-episode names, air dates, runtimes, vote averages, still URLs, and guest stars (embedded per episode)
-- Plus the season's regular recurring cast (distinct from per-episode guest stars)
-- `series_id` is echoed from the input — the TMDB season endpoint does not return it. Season 0 is "Specials"
+- Per-episode names, air dates, runtimes, vote averages, still URLs, and guest stars
+- Also returns the season's regular cast
+- `series_id` is echoed from the input; season 0 is "Specials"
 
 ---
 
 ### `tmdb_get_person` <sub>tool</sub>
 
-- Biography, birth/death dates, place of birth, known-for department, aliases, gender label
-- `combined_credits` split into `cast_credits` and `crew_credits`, ordered by release year descending (unknown years last; ties keep TMDB order). `credits_page` defaults to 1 and selects up to 50 entries from each list independently; full totals remain available on every page
-- Follow `next_credits_page` with `tmdb_get_person({"person_id":17419,"credits_page":2})`; continuation guidance preserves a supplied `language`. Past-end pages return empty lists successfully. The person resource retains the first-page record without tool paging fields
-- IMDb id plus the extended cross-platform id set (Wikidata, social handles) for chaining to other servers
+- Biography, vital dates, place of birth, known-for department, aliases, gender, and external ids (IMDb, Wikidata, social handles)
+- `combined_credits` split into `cast_credits` and `crew_credits`, newest first; `credits_page` (default 1) returns up to 50 of each, with full totals on every page
+- Follow `next_credits_page` for more; pages past the end return empty lists
 
 ---
 
 ### `tmdb_discover_titles` <sub>tool</sub>
 
-- Filter by `with_genres`/`without_genres`, exact `year` or a `release_date_gte`/`lte` window, `vote_average` range, `vote_count_gte` floor, `with_cast`/`with_crew` (movie), `with_networks` (tv), `with_watch_providers` + `watch_region`, `with_original_language`, and `runtime` range
-- Sort by popularity, revenue, vote average, vote count, or release date. TV `primary_release_date.asc/desc` maps to first-air-date order; TV revenue sorts use `popularity.desc` with a notice. Set `release_date_lte` to exclude future releases. Pair `vote_average.desc` with `vote_count_gte` (~100–1000) so a 10.0-from-3-votes title does not dominate
-- `with_cast`/`with_crew` are movie-only and `with_networks` is tv-only; inapplicable filters produce a notice. `with_watch_providers` requires `watch_region`; omitting it returns `region_required`.
+- Filter by `with_genres`/`without_genres`, `year` or a `release_date_gte`/`lte` window, `vote_average` range, `vote_count_gte`, `with_cast`/`with_crew` (movie), `with_networks` (tv), `with_watch_providers` + `watch_region`, `with_original_language`, and `runtime` range
+- Sort by popularity, revenue, vote average, vote count, or release date; pair `vote_average.desc` with `vote_count_gte` (~100–1000) to keep low-vote titles out of the top
+- Filters that don't apply to the media type produce a notice; `with_watch_providers` without `watch_region` returns `region_required`
 
 ---
 
 ### `tmdb_get_trending` <sub>tool</sub>
 
-- `media_type`: `all` (default) mixes movies, shows, and people, each tagged with `media_type`; or restrict to one type
-- `time_window`: `day` (more volatile) or `week` (default, steadier). Empty results return normally with recovery guidance.
-- Results are the same ranked summary cards as search and discover, up to 20 per page, with `page` for paging
+- `media_type`: `all` (default) mixes movies, shows, and people; or restrict to one type
+- `time_window`: `day` or `week` (default)
+- Up to 20 results per page, with `page` for more; empty results return normally with recovery guidance
 
 ---
 
 ### `tmdb_get_watch_providers` <sub>tool</sub>
 
-- Returns flatrate (subscription), rent, buy, ads (ad-supported free), and free provider lists with logo URLs, plus the TMDB JustWatch-backed `link` — the supported path to actual deep links
-- A `watch_region` (ISO 3166-1 alpha-2) is required: availability is region-specific and there is no global answer; the response always carries a region caveat
-- An empty region result is a valid "not available to stream here" answer. Provider ids feed into `tmdb_discover_titles` `with_watch_providers`.
+- Returns flatrate, rent, buy, ads, and free provider lists with logo URLs, plus the TMDB JustWatch `link`
+- `watch_region` (ISO 3166-1 alpha-2) is required; the response always states the region
+- An empty result means not streamable in that region; provider ids feed `with_watch_providers` in `tmdb_discover_titles`
 
 ---
 
 ### `tmdb://movie/{movie_id}` <sub>resource</sub>
 
-- Same enriched record as `tmdb_get_movie`, with the full `append_to_response` set — `application/json`
+- Same record as `tmdb_get_movie` — `application/json`
 - `movie_id` comes from `tmdb_search_titles` or `tmdb_discover_titles`
 - Typed `movie_not_found` error when TMDB returns 404 for the id
 
@@ -125,7 +122,7 @@ All resource data is also reachable via tools — the three resources are conven
 
 ### `tmdb://tv/{series_id}` <sub>resource</sub>
 
-- Same enriched record as `tmdb_get_show`, with the full `append_to_response` set — `application/json`
+- Same record as `tmdb_get_show` — `application/json`
 - `series_id` comes from `tmdb_search_titles` or `tmdb_discover_titles`
 - Typed `show_not_found` error when TMDB returns 404 for the id
 
@@ -143,18 +140,18 @@ Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core): s
 
 TMDB-specific:
 
-- Single typed client for the TMDB v3 REST API, authenticated with a v4 Read Access Token over `Authorization: Bearer`
-- Image `*_path` fields resolved to full `https://image.tmdb.org/t/p/{size}{path}` URLs — null paths omit the field rather than emitting a broken URL
-- `genre_ids[]` resolved to genre names from per-`media_type` maps cached at startup, so list results carry readable genres without an extra call
-- Detail tools collapse credits, videos, recommendations, similar, keywords, and external ids into one HTTP call via `append_to_response`
-- Region-aware streaming availability backed by JustWatch — region is always an explicit input, never assumed
+- Typed client for the TMDB v3 REST API, authenticated with a v4 Read Access Token
+- Image paths resolved to full image URLs; missing paths omit the field
+- Genre ids resolved to genre names, so list results are readable without an extra call
+- Detail tools return credits, videos, recommendations, keywords, and external ids in one request
+- Region-aware streaming availability backed by JustWatch; region is always an explicit input
 
 Agent-friendly output:
 
-- TMDB attribution on every response — surfaced in `enrichment.attribution` so it reaches both the `structuredContent` and `content[]` client surfaces
-- Provenance and pagination on list responses — total-result counts, page/total-pages, and an effective-filter notice so agents can reason about what was actually queried
-- Empty results and empty provider regions return normally with recovery guidance, not as errors — "no titles matched" and "not streamable here" are real answers an agent must act on
-- Region and truncation caveats are explicit — watch-provider results always state the region; capped filmographies disclose the pre-cap totals
+- TMDB attribution on every response in `enrichment.attribution`
+- List responses carry total counts, page/total-pages, and a notice of the filters actually applied
+- Empty results return normally with recovery guidance, not as errors
+- Watch-provider results always state the region; capped filmographies disclose their full totals
 
 ## Getting started
 
@@ -262,9 +259,9 @@ All configuration is validated at startup via Zod schemas. Key environment varia
 
 | Variable | Description | Default |
 |:---|:---|:---|
-| `TMDB_API_KEY` | **Required.** TMDB v4 API Read Access Token (JWT), sent as `Authorization: Bearer`. Not the v3 `?api_key=` value. | — |
-| `TMDB_LANGUAGE` | Default response language as ISO 639-1, optionally with region (e.g. `en-US`). A per-call `language` input overrides it. | `en-US` |
-| `TMDB_DEFAULT_REGION` | ISO 3166-1 country example in discovery's missing-`watch_region` recovery hint. Never defaults queries; `tmdb_get_watch_providers` still requires an explicit region. | `US` |
+| `TMDB_API_KEY` | **Required.** TMDB v4 API Read Access Token (JWT). | — |
+| `TMDB_LANGUAGE` | Default response language (e.g. `en-US`); a per-call `language` overrides it. | `en-US` |
+| `TMDB_DEFAULT_REGION` | Region shown in the missing-`watch_region` hint; never applied to queries. | `US` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`. | `stdio` |
 | `MCP_HTTP_PORT` | Port for the HTTP server. | `3010` |
 | `MCP_AUTH_MODE` | Auth mode: `none`, `jwt`, or `oauth`. | `none` |
@@ -272,7 +269,7 @@ All configuration is validated at startup via Zod schemas. Key environment varia
 | `LOG_TOOL_FAILURE_PAYLOADS` | Log failed tool arguments and results, redacted by key name and capped at `LOG_TOOL_FAILURE_PAYLOAD_MAX_BYTES` (default `16384`). Free-form values may contain secrets. | `false` |
 | `STORAGE_PROVIDER_TYPE` | Storage backend. | `in-memory` |
 | `OTEL_ENABLED` | Enable [OpenTelemetry instrumentation](https://github.com/cyanheads/mcp-ts-core/tree/main/docs/telemetry) (spans, metrics, completion logs). | `false` |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | Opt-in OTLP log endpoint; `OTEL_EXPORTER_OTLP_ENDPOINT` enables traces and metrics only. | — |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | OTLP log endpoint. | — |
 
 See [`.env.example`](./.env.example) for the full list of optional overrides.
 
@@ -313,11 +310,11 @@ The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `
 
 | Directory | Purpose |
 |:---|:---|
-| `src/index.ts` | `createApp()` entry point — registers tools and resources, and primes the startup cache in `setup()`. |
+| `src/index.ts` | `createApp()` entry point — registers tools and resources. |
 | `src/config` | Server-specific environment variable parsing and validation with Zod. |
 | `src/mcp-server/tools` | Tool definitions (`*.tool.ts`) — the eight TMDB tools. |
 | `src/mcp-server/resources` | Resource definitions (`*.resource.ts`) — movie, TV, and person detail. |
-| `src/services/tmdb` | TMDB v3 REST client — Bearer auth, retry/timeout, the image/genre startup cache, and the `imageUrl`/`genreNames` helpers. |
+| `src/services/tmdb` | TMDB v3 REST client. |
 | `tests/` | Unit and integration tests mirroring `src/`. |
 
 ## Development guide
@@ -327,7 +324,6 @@ See [`AGENTS.md`](./AGENTS.md) (or [`CLAUDE.md`](./CLAUDE.md), the same content)
 - Handlers throw, framework catches — no `try/catch` in tool logic
 - Use `ctx.log` for request-scoped logging, `ctx.state` for tenant-scoped storage
 - Register new tools and resources via the barrels in `src/mcp-server/*/definitions/index.ts`
-- Wrap the TMDB API: validate raw → normalize to the domain type → return the output schema; never fabricate missing fields (null poster paths omit the URL, unknown genre ids are dropped)
 
 ## Attribution
 
