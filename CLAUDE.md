@@ -2,10 +2,10 @@
 
 **Server:** tmdb-mcp-server
 **Version:** 0.1.4
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.13`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.15`
 **Engines:** Bun ≥1.4.0, Node ≥24.0.0
-**MCP SDK:** `@modelcontextprotocol/server` ^2.2.0
-**Zod:** ^4.6.5
+**MCP SDK:** `@modelcontextprotocol/server` ^2.3.1
+**Zod:** ^4.6.7
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
 
@@ -86,6 +86,8 @@ export const tmdbSearchTitles = tool('tmdb_search_titles', {
 
 Shared sub-schemas (`SummaryItemSchema`, `CastMemberSchema`, …), the `TMDB_ATTRIBUTION` constant, the `listEnrichment`/`detailEnrichment` blocks, and the markdown renderers live in `tools/definitions/_shared.ts` — reused across every list and detail tool rather than re-declared.
 
+Discovery maps TV `primary_release_date.asc/desc` to `first_air_date.asc/desc`; TV revenue sorts explicitly use `popularity.desc` with a notice. Never add implicit date bounds. Person filmography uses `credits_page` (default 1), independent 50-entry cast/crew slices after stable release-year sorting, and an optional `next_credits_page`. Continuation guidance preserves supplied language; the person resource keeps its first-page shape without tool paging fields.
+
 ### Resource
 
 ```ts
@@ -125,7 +127,7 @@ import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
 const ServerConfigSchema = z.object({
   apiKey: z.string().min(1).describe('TMDB v4 API Read Access Token (Bearer). Required.'),
   language: z.string().default('en-US').describe('Default response language (ISO 639-1[-COUNTRY]).'),
-  defaultRegion: z.string().default('US').describe('Default ISO 3166-1 region hint for region-aware error messages.'),
+  defaultRegion: z.string().default('US').describe('ISO 3166-1 country example in discovery missing-region errors; never a query default.'),
 });
 
 let _config: z.infer<typeof ServerConfigSchema> | undefined;
@@ -199,9 +201,9 @@ Handlers receive a unified `ctx` object. Key properties:
 | `ctx.clientCapabilities` | Capabilities declared for this request, or `undefined`; use for optional input, never to skip consent. |
 | `ctx.enrich` | Success-path enrichment — `ctx.enrich({ ... })` for scalar echoes (every tool sets `attribution`), `ctx.enrich.total(n)` on list tools, `ctx.enrich.notice(text)` for empty-result/region guidance, `ctx.enrich.truncated({ shown, cap, guidance })` when a list is capped. Reaches `structuredContent` and `content[]`; lands only when the definition declares an `enrichment` block. |
 | `ctx.content` | Non-text content blocks — `.image(data, mimeType)`, `.audio(data, mimeType)`, or `ctx.content(block)` for a raw block. Prepended to `content[]` after `format()`; never enters `structuredContent`. |
-| `ctx.recoveryFor(reason)` | Typed lookup of a declared hint. `tmdb_discover_titles` keeps an explicit forward for its direct-handler recovery test; the framework also fills the hint on production envelopes. |
+| `ctx.recoveryFor(reason)` | Typed lookup of a declared hint. Discovery builds its missing-region hint at handler time using `defaultRegion` as an example only; availability queries still require a caller-selected region. |
 | `ctx.signal` | `AbortSignal` for cancellation. |
-| `ctx.requestId` | Unique request ID. |
+| `ctx.requestId` | Request ID — the one every log record of the call carries and its error envelope returns as `data.requestId`. |
 | `ctx.tenantId` | Tenant ID from JWT; `'default'` for stdio or HTTP with auth off. |
 
 ---

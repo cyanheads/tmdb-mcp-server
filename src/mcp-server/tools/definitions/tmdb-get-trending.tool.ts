@@ -65,7 +65,12 @@ export const tmdbGetTrending = tool('tmdb_get_trending', {
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [{ type: 'text', text: `No trending results (${result.total_results} total).` }];
+      return [
+        {
+          type: 'text',
+          text: `No trending results (${result.total_results} total; page ${result.page}/${result.total_pages}).`,
+        },
+      ];
     }
     const lines = [
       `**${result.total_results} trending** (page ${result.page}/${result.total_pages})\n`,

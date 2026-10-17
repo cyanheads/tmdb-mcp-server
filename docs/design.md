@@ -16,7 +16,7 @@ Film and television metadata via The Movie Database (TMDB) v3 REST API — searc
 | `tmdb_get_movie` | Full movie detail by id. Synopsis, runtime, genres, release date, US certification, budget/revenue, votes, full cast + key crew, trailer keys, poster/backdrop URLs, recommendations, similar, keywords. One call via `append_to_response`. | `movie_id`, `language`, `append` | `readOnlyHint`, `idempotentHint` |
 | `tmdb_get_show` | Full TV show detail by id. Overview, genres, first/last air date, status, season/episode counts, creators, networks, season summaries, cast, trailers, recommendations. Mirror of `get_movie` for series. | `series_id`, `language`, `append` | `readOnlyHint`, `idempotentHint` |
 | `tmdb_get_season` | Episode list for one season of a show. Episode names, air dates, overviews, guest stars, still URLs, vote averages. Bridges the gap between show-level summary and per-episode detail. | `series_id`, `season_number`, `language` | `readOnlyHint`, `idempotentHint` |
-| `tmdb_get_person` | Person detail by id. Biography, birth/death, place of birth, known-for department, and `combined_credits` — full filmography as cast and crew. | `person_id`, `language` | `readOnlyHint`, `idempotentHint` |
+| `tmdb_get_person` | Person detail by id. Biography, birth/death, place of birth, known-for department, and paged `combined_credits` as cast and crew. | `person_id`, `language`, `credits_page` | `readOnlyHint`, `idempotentHint` |
 | `tmdb_discover_titles` | Filtered title discovery (movie or tv). Genre(s), release-year range, vote range, vote-count floor, cast/crew (movie), network (tv), watch providers + region, language, runtime, sort (popularity/revenue/vote/date). The power-query entry point. | `media_type`, `sort_by`, `with_genres`, `year`/`release_date_*`, `vote_average_*`, `vote_count_gte`, `with_cast`, `with_crew`, `with_networks`, `with_watch_providers`+`watch_region`, `with_original_language`, `runtime_*`, `page` | `readOnlyHint`, `openWorldHint` |
 | `tmdb_get_trending` | Trending movies, TV, or people for the day or week. Ranked entities with standard summary fields. | `media_type`, `time_window`, `language`, `page` | `readOnlyHint`, `openWorldHint` |
 | `tmdb_get_watch_providers` | Where a title streams, by region. flatrate/rent/buy/ads/free provider lists with logo URLs and the JustWatch-backed TMDB link, for one country. | `media_type`, `id`, `watch_region` | `readOnlyHint`, `openWorldHint` |
@@ -27,7 +27,7 @@ Film and television metadata via The Movie Database (TMDB) v3 REST API — searc
 |:-------------|:------------|:-----------|
 | `tmdb://movie/{movie_id}` | Movie detail by id. Injectable context for chat about a specific film. | No |
 | `tmdb://tv/{series_id}` | Show detail by id. Injectable context for chat about a specific series. | No |
-| `tmdb://person/{person_id}` | Person detail by id. Injectable context for chat about a specific person. | No |
+| `tmdb://person/{person_id}` | Person detail with the first 50 cast and 50 crew credits and full totals; no tool-only paging fields. | No; use `tmdb_get_person` for further pages |
 
 Each resource resolves through the same service method as its paired tool (`getMovie` / `getShow` / `getPerson`) with default append set, so resource-supporting clients get the enriched record. All three are fully reachable via the tool surface — resources are convenience only.
 
@@ -110,7 +110,7 @@ Single service. All endpoints share base URL, Bearer auth, retry/timeout config,
 |:--------|:---------|:------------|
 | `TMDB_API_KEY` | **Yes** | TMDB v4 API Read Access Token (JWT). Sent as `Authorization: Bearer ${TMDB_API_KEY}`. Missing → `ConfigurationError` at startup naming the variable. |
 | `TMDB_LANGUAGE` | No | Default ISO 639-1 (optionally `-COUNTRY`) language for responses, e.g. `en-US`. Default `en-US`. Per-call `language` input overrides it. |
-| `TMDB_DEFAULT_REGION` | No | Default ISO 3166-1 country for watch-provider and region-aware queries, e.g. `US`. Used only as a fallback hint in error messages; `tmdb_get_watch_providers` still **requires** an explicit `watch_region` (region must be a conscious choice). |
+| `TMDB_DEFAULT_REGION` | No | ISO 3166-1 country example in discovery's missing-`watch_region` recovery hint, e.g. `US`. Never defaults an availability query; both availability tools require caller-selected regions. |
 
 `src/config/server-config.ts`, separate Zod schema, via `parseEnvConfig`:
 
@@ -118,7 +118,7 @@ Single service. All endpoints share base URL, Bearer auth, retry/timeout config,
 const ServerConfigSchema = z.object({
   apiKey: z.string().min(1).describe('TMDB v4 API Read Access Token (Bearer).'),
   language: z.string().default('en-US').describe('Default response language (ISO 639-1[-COUNTRY]).'),
-  defaultRegion: z.string().default('US').describe('Default ISO 3166-1 region hint.'),
+  defaultRegion: z.string().default('US').describe('ISO 3166-1 country example in discovery missing-region errors; never a query default.'),
 });
 // parseEnvConfig(ServerConfigSchema, {
 //   apiKey: 'TMDB_API_KEY', language: 'TMDB_LANGUAGE', defaultRegion: 'TMDB_DEFAULT_REGION',
@@ -352,11 +352,11 @@ errors: [
 
 **Purpose:** person detail + full filmography.
 
-**Input:** `person_id` (positive int — "TMDB person id; from tmdb_search_titles mode \"person\"/\"multi\"."), `language` (optional). Append is fixed internally (`combined_credits,external_ids`) — not a parameter, since both are always wanted for a person dossier.
+**Input:** `person_id` (positive int — "TMDB person id; from tmdb_search_titles mode \"person\"/\"multi\"."), `language` (optional), `credits_page` (positive int, default 1). Append is fixed internally (`combined_credits,external_ids`) — not a parameter, since both are always wanted for a person dossier.
 
 **Output:** `id`, `name`, `biography` (optional), `birthday` (optional), `deathday` (optional), `place_of_birth` (optional), `known_for_department` (optional), `also_known_as` (optional string[]), `gender` (optional — mapped to a label: `0`→unknown,`1`→female,`2`→male,`3`→non-binary), `popularity`, `homepage` (optional), `imdb_id` (optional — **present in the root person response without any append**; `external_ids` append adds wikidata_id, facebook_id, instagram_id, tiktok_id, twitter_id, youtube_id for cross-platform chaining), `profile_url` (optional), `cast_credits` (`{ id, media_type, title, character?, release_year?, vote_average?, poster_url? }[]` — from `combined_credits.cast`), `crew_credits` (`{ id, media_type, title, job, department, release_year?, poster_url? }[]` — from `combined_credits.crew`), `external_ids` (optional object — full social/platform id set from the append).
 
-Credits sorted by `release_year` descending (most recent first); the natural ordering is interpretable and honest (no synthetic "relevance" score). Each capped to a sane display size with the cap disclosed via the optional truncation enrichment if applied (see Enrichment Plan).
+Credits sort by `release_year` descending, unknown years last, retaining upstream order for equal years. `credits_page` is a positive integer defaulting to 1 and selects 50 credits independently from each sorted list. Sorting precedes slicing so the first page preserves the existing ordering. One upstream combined-credit request serves each invocation; no additional request is needed to select a slice. The tool returns `credits_page`, full `cast_credits_total`/`crew_credits_total`, and `next_credits_page` only while either list has remaining entries. Truncation enrichment describes the current page and provides an executable `tmdb_get_person` call including any supplied language. Empty and past-end pages succeed without a next-page notice. The person resource keeps its first-page record and URI without the tool-only pagination fields.
 
 **Errors:**
 ```ts
@@ -383,7 +383,7 @@ z.object({
     'vote_average.desc','vote_average.asc',
     'vote_count.desc','vote_count.asc',
   ]).default('popularity.desc')
-    .describe('Sort order. "popularity.desc" (default) for what is broadly relevant now; "vote_average.desc" for critically rated (pair with vote_count_gte to avoid tiny-sample outliers); "revenue.desc" for box office; "primary_release_date.desc" for newest. For tv, primary_release_date.desc sorts by first-air date and gives sensible results; first_air_date.desc is accepted by the API but returns bogus future-dated entries.'),
+    .describe('Sort by popularity, vote average/count, movie revenue, or release date. TV primary_release_date.asc/desc maps to first_air_date.asc/desc; TV revenue sorts use popularity.desc with a notice. Future releases remain eligible unless release_date_lte is supplied.'),
   with_genres: z.array(z.number().int()).optional()
     .describe('Genre ids to require (AND — comma-joined in the API call). Genre ids differ between movie and tv — the names appear in any movie/show result\'s genres[], and the full map is applied server-side to label results. Combine multiple to narrow (e.g. Action + Comedy).'),
   without_genres: z.array(z.number().int()).optional()
@@ -427,17 +427,19 @@ z.object({
 
 **Handler guards:** if `with_watch_providers` is set but `watch_region` is empty/absent → `ctx.fail('region_required', …)`. `with_cast` and `with_crew` are silently ignored for `media_type: 'tv'` with a `ctx.enrich.notice`. `with_networks` is silently ignored for `media_type: 'movie'` with a `ctx.enrich.notice`.
 
-**API param mapping (service layer).** The Zod input schema uses snake_case field names, but TMDB's discover API requires **dot notation** for all range and filter params. The service must translate them: `vote_count_gte` → `vote_count.gte`, `vote_average_gte` → `vote_average.gte`, `vote_average_lte` → `vote_average.lte`, `release_date_gte` → `release_date.gte`, `release_date_lte` → `release_date.lte`, `runtime_gte` → `with_runtime.gte`, `runtime_lte` → `with_runtime.lte`. Using underscore variants silently returns unfiltered results (verified live). `with_genres`, `without_genres` are joined with `,` (AND). `with_cast`, `with_crew`, `with_networks`, `with_watch_providers` are joined with `|` (OR).
+**API param mapping (service layer).** The Zod input schema uses snake_case field names, but TMDB's discover API requires **dot notation** for range params. The service translates `vote_count_gte` → `vote_count.gte`, `vote_average_gte/lte` → `vote_average.gte/lte`, `runtime_gte/lte` → `with_runtime.gte/lte`. Date bounds map to `primary_release_date.gte/lte` for movies and `first_air_date.gte/lte` for TV. Using underscore variants silently returns unfiltered results. `with_genres`, `without_genres` are joined with `,` (AND). `with_cast`, `with_crew`, `with_networks`, `with_watch_providers` are joined with `|` (OR).
 
 **Errors:**
 ```ts
 errors: [
-  { reason: 'region_required', code: JsonRpcErrorCode.InvalidParams,
+  { reason: 'region_required', code: JsonRpcErrorCode.ValidationError,
     when: 'with_watch_providers is set without a watch_region',
     recovery: 'Provide watch_region (ISO 3166-1, e.g. "US") — streaming availability is region-specific and cannot be queried globally.' },
 ]
 ```
 Empty `results[]` → `ctx.enrich.notice` echoing the active filters and suggesting which to relax (commonly: lower `vote_count_gte`, widen the date range, drop a genre).
+
+The missing-region handler replaces the static recovery example with `getServerConfig().defaultRegion` at call time. This setting never supplies an availability query region. Empty search/discovery/trending text includes the returned `page` and `total_pages`, including zero total pages.
 
 ### `tmdb_get_trending`
 
@@ -536,7 +538,7 @@ Each step is independently testable against real API responses, including a spar
 - **Watch providers ≠ deep links.** TMDB/JustWatch returns provider presence + a TMDB link, *not* a play URL. The `link` field is the supported path to deep links. Availability is per-region and changes frequently; there is no global view.
 - **`with_cast`/`with_crew` are movie-only; `with_networks` is TV-only.** TMDB discover silently ignores `with_cast`/`with_crew` for tv and `with_networks` for movie. The tool accepts these params for both `media_type` values but no-ops the inapplicable ones with a `ctx.enrich.notice`.
 - **No user/account/rating/list operations.** Those require a user session (write-capable, OAuth-like). Out of scope for a read-only catalog server.
-- **Person credits can be large.** Prolific people return hundreds of `combined_credits` entries; the tool caps each of cast/crew to a display size (recency-ordered) and discloses truncation. The full set is reachable by paging via discover/search where applicable.
+- **Person credits can be large.** Use `credits_page` on `tmdb_get_person` to retrieve successive 50-entry cast/crew slices and follow `next_credits_page` until absent. Each invocation fetches the current combined-credit record, so upstream changes between calls can shift page boundaries.
 - **Certification is US-only in the summary.** `us_certification`/`us_content_rating` extract the US entry from `release_dates`/`content_ratings`. Other regions' certifications exist in the raw namespace but aren't surfaced in the curated output (keeps the record focused; revisit if multi-region certification is requested).
 - **Moonshot (deferred): watchlist analysis.** A tool that takes a list of titles, batch-fetches, and returns clustered recommendations + a combined per-region availability matrix. Not in the initial surface — it would be the one candidate for a prompt or a workflow tool later.
 
@@ -626,7 +628,7 @@ Independent design review against the live TMDB v3 API and the `design-mcp-serve
 | 6 | **`known_for` items in person search results are movie/TV records, not person records.** They have `poster_path`, NOT `profile_path`. The design output listed `{ id, media_type, title }` which was correct in omitting `profile_url`, but said nothing about `poster_url`. | Corrected the `known_for` description to `{ id, media_type, title, poster_url? }` with a note that these are media items (movie/tv), not person records. |
 | 7 | **`imdb_id` is in the person root response, not only from `external_ids` append.** The design stated "imdb_id (optional, from external_ids)" which was misleading. `imdb_id` is present in the root `/person/{id}` response WITHOUT any append. The `external_ids` append adds the full social/platform id set (wikidata, facebook, instagram, tiktok, twitter, youtube). | Corrected the person output description to note `imdb_id` is in the root, and that `external_ids` provides the extended cross-platform id set. |
 | 8 | **Certification extraction should prefer type-3 (theatrical) releases.** The live Fight Club data showed multiple US release_dates entries — some with empty `certification`, some with "R". Type 3 is the theatrical release and is the canonical cert. The design said "first non-empty certification" which usually works but would pick a non-theatrical cert if it appeared earlier in the array. | Updated the Workflow Analysis table row to specify: prefer type-3 theatrical entry; fallback to first non-empty. |
-| 9 | **TV sort_by note corrected.** The design said `primary_release_date` "maps to first-air date" for TV, which is essentially accurate, but the note didn't explain why `first_air_date.desc` shouldn't be used directly. Live test showed `first_air_date.desc` returns shows with bogus future dates (2035–2043); `primary_release_date.desc` returns sensible recent dates. | Updated the `sort_by` describe text to explain the gotcha. |
+| 9 | **TV uses first-air-date sorts.** TMDB ignores movie-only `primary_release_date.*` and `revenue.*` sorts on TV and returns popularity order. Future dates alone do not establish invalid records. | Map TV date sorts to `first_air_date.asc/desc`; explicitly use `popularity.desc` for TV revenue sorts and disclose it. Apply only caller-supplied date bounds. |
 
 ### What was confirmed correct
 

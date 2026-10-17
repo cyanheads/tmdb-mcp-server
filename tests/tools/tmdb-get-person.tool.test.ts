@@ -5,7 +5,7 @@
  */
 
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   initServiceForTools,
@@ -23,11 +23,115 @@ vi.mock('@cyanheads/mcp-ts-core/utils', async (importActual) => {
 const { tmdbGetPerson } = await import('@/mcp-server/tools/definitions/tmdb-get-person.tool.js');
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   setRoutes(STARTUP_ROUTES);
 });
 
 describe('tmdbGetPerson', () => {
+  it.each([
+    [102, 51],
+    [50, 0],
+    [0, 50],
+    [0, 0],
+  ])(
+    'walks independent cast/crew slices (%i/%i) on both surfaces',
+    async (castTotal, crewTotal) => {
+      const credits = (length: number) =>
+        Array.from({ length }, (_, id) => ({
+          id,
+          media_type: id % 2 ? 'tv' : 'movie',
+          title: `Credit ${id}`,
+          name: `Credit ${id}`,
+          ...(id === 0
+            ? {}
+            : id % 2
+              ? { first_air_date: '2020-01-01' }
+              : { release_date: '2020-12-31' }),
+          job: 'Writer',
+        }));
+      await initServiceForTools({
+        '/person/1': {
+          id: 1,
+          name: 'Person',
+          biography: 'Biography',
+          combined_credits: { cast: credits(castTotal), crew: credits(crewTotal) },
+        },
+      });
+      const receivedCast: number[] = [];
+      const receivedCrew: number[] = [];
+      const pages = Math.max(1, Math.ceil(Math.max(castTotal, crewTotal) / 50));
+      const fetch = vi.spyOn(await import('@cyanheads/mcp-ts-core/utils'), 'fetchWithTimeout');
+      for (let credits_page = 1; credits_page <= pages + 1; credits_page++) {
+        const result = await runToolContract(tmdbGetPerson, {
+          person_id: 1,
+          credits_page,
+          language: 'de-DE',
+        });
+        expect(result.isError).not.toBe(true);
+        const data = result.structuredContent as Record<string, unknown>;
+        expect(data).toMatchObject({
+          credits_page,
+          cast_credits_total: castTotal,
+          crew_credits_total: crewTotal,
+          totalCount: castTotal + crewTotal,
+          biography: 'Biography',
+        });
+        const cast = data.cast_credits as { id: number }[];
+        const crew = data.crew_credits as { id: number }[];
+        expect(cast).toHaveLength(Math.min(50, Math.max(0, castTotal - (credits_page - 1) * 50)));
+        expect(crew).toHaveLength(Math.min(50, Math.max(0, crewTotal - (credits_page - 1) * 50)));
+        receivedCast.push(...cast.map((c) => c.id));
+        receivedCrew.push(...crew.map((c) => c.id));
+        const text = result.content
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text)
+          .join('\n');
+        expect(text).toContain(`Credits page: ${credits_page}`);
+        expect(text).toContain('TMDB API');
+        expect(text).toContain(`Cast credits** (${cast.length} of ${castTotal})`);
+        expect(text).toContain(`Crew credits** (${crew.length} of ${crewTotal})`);
+        for (const credit of [...cast, ...crew]) expect(text).toContain(`id ${credit.id}]`);
+        if (credits_page < pages) {
+          expect(data.next_credits_page).toBe(credits_page + 1);
+          const call = `tmdb_get_person(${JSON.stringify({ person_id: 1, credits_page: credits_page + 1, language: 'de-DE' })})`;
+          expect(String(data.notice)).toContain(call);
+          expect(text).toContain(call);
+          const serialized = String(data.notice).split('tmdb_get_person(')[1]?.split(').')[0];
+          expect(serialized).toBeDefined();
+          const nextInput = JSON.parse(String(serialized));
+          const continued = await runToolContract(tmdbGetPerson, nextInput);
+          expect(continued.isError).not.toBe(true);
+          expect(continued.structuredContent).toMatchObject({ credits_page: credits_page + 1 });
+        } else {
+          expect(data.next_credits_page).toBeUndefined();
+          expect(data.notice).toBeUndefined();
+          expect(text).not.toContain('tmdb_get_person(');
+        }
+      }
+      const expected = (total: number) =>
+        total ? [...Array.from({ length: total - 1 }, (_, i) => i + 1), 0] : [];
+      expect(receivedCast).toEqual(expected(castTotal));
+      expect(receivedCrew).toEqual(expected(crewTotal));
+      expect(fetch).toHaveBeenCalledTimes(pages + 1 + Math.max(0, pages - 1));
+    },
+  );
+
+  it('rejects invalid pages and preserves the declared missing-person recovery', async () => {
+    await initServiceForTools();
+    for (const credits_page of [0, -1, 1.5]) {
+      const result = await runToolContract(tmdbGetPerson, { person_id: 1, credits_page });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.structuredContent)).toContain('-32602');
+    }
+    throwForPath('/person/99999999', JsonRpcErrorCode.NotFound);
+    const result = await runToolContract(tmdbGetPerson, { person_id: 99999999, credits_page: 2 });
+    expect(result.isError).toBe(true);
+    for (const surface of [result.structuredContent, result.content]) {
+      expect(JSON.stringify(surface)).toContain('person_not_found');
+      expect(JSON.stringify(surface)).toContain('tmdb_search_titles');
+    }
+  });
   it('returns a recency-ordered filmography with gender label (headline path)', async () => {
     await initServiceForTools({
       '/person/287': {
@@ -135,6 +239,7 @@ describe('tmdbGetPerson', () => {
 
   it('format() renders cast and crew credits with totals', () => {
     const blocks = tmdbGetPerson.format!({
+      credits_page: 1,
       id: 287,
       name: 'Brad Pitt',
       gender: 'male',

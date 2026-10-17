@@ -31,7 +31,7 @@
         },
         {
           "name": "TMDB_DEFAULT_REGION",
-          "description": "Default ISO 3166-1 country hint (e.g. 'US') used in region-aware error messages.",
+          "description": "ISO 3166-1 country example in discovery missing-watch_region errors; never a query default.",
           "format": "string",
           "isRequired": false,
           "default": "US"
@@ -71,7 +71,7 @@
         },
         {
           "name": "TMDB_DEFAULT_REGION",
-          "description": "Default ISO 3166-1 country hint (e.g. 'US') used in region-aware error messages.",
+          "description": "ISO 3166-1 country example in discovery missing-watch_region errors; never a query default.",
           "format": "string",
           "isRequired": false,
           "default": "US"

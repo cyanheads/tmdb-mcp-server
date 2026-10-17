@@ -595,7 +595,12 @@ export class TmdbService {
 
   /* ──────────────────────────── Person ─────────────────────────────────── */
 
-  async getPerson(personId: number, ctx: Context, language?: string): Promise<PersonDetail> {
+  async getPerson(
+    personId: number,
+    ctx: Context,
+    language?: string,
+    creditsPage = 1,
+  ): Promise<PersonDetail> {
     const qs = new URLSearchParams({
       language: language ?? this.defaultLanguage,
       append_to_response: 'combined_credits,external_ids',
@@ -607,41 +612,46 @@ export class TmdbService {
       'person',
       personId,
     );
-    return this.normalizePerson(raw);
+    return this.normalizePerson(raw, creditsPage);
   }
 
-  private normalizePerson(raw: RawPerson): PersonDetail {
+  private normalizePerson(raw: RawPerson, creditsPage = 1): PersonDetail {
     const castRaw = raw.combined_credits?.cast ?? [];
     const crewRaw = raw.combined_credits?.crew ?? [];
 
     const castSorted = [...castRaw].sort((a, b) => this.creditYear(b) - this.creditYear(a));
     const crewSorted = [...crewRaw].sort((a, b) => this.creditYear(b) - this.creditYear(a));
 
-    const cast_credits: PersonCastCredit[] = castSorted.slice(0, CREDITS_CAP).map((c) => {
-      const releaseYear = this.year(c.release_date ?? c.first_air_date);
-      return {
-        id: c.id,
-        media_type: (c.media_type ?? 'movie') as MediaType,
-        title: c.title ?? c.name ?? '',
-        ...(c.character ? { character: c.character } : {}),
-        ...(releaseYear !== undefined ? { release_year: releaseYear } : {}),
-        ...(typeof c.vote_average === 'number' ? { vote_average: c.vote_average } : {}),
-        ...this.urlField('poster_url', c.poster_path, POSTER_SIZE),
-      };
-    });
+    const offset = (creditsPage - 1) * CREDITS_CAP;
+    const cast_credits: PersonCastCredit[] = castSorted
+      .slice(offset, offset + CREDITS_CAP)
+      .map((c) => {
+        const releaseYear = this.year(c.release_date ?? c.first_air_date);
+        return {
+          id: c.id,
+          media_type: (c.media_type ?? 'movie') as MediaType,
+          title: c.title ?? c.name ?? '',
+          ...(c.character ? { character: c.character } : {}),
+          ...(releaseYear !== undefined ? { release_year: releaseYear } : {}),
+          ...(typeof c.vote_average === 'number' ? { vote_average: c.vote_average } : {}),
+          ...this.urlField('poster_url', c.poster_path, POSTER_SIZE),
+        };
+      });
 
-    const crew_credits: PersonCrewCredit[] = crewSorted.slice(0, CREDITS_CAP).map((c) => {
-      const releaseYear = this.year(c.release_date ?? c.first_air_date);
-      return {
-        id: c.id,
-        media_type: (c.media_type ?? 'movie') as MediaType,
-        title: c.title ?? c.name ?? '',
-        job: c.job ?? '',
-        ...(c.department ? { department: c.department } : {}),
-        ...(releaseYear !== undefined ? { release_year: releaseYear } : {}),
-        ...this.urlField('poster_url', c.poster_path, POSTER_SIZE),
-      };
-    });
+    const crew_credits: PersonCrewCredit[] = crewSorted
+      .slice(offset, offset + CREDITS_CAP)
+      .map((c) => {
+        const releaseYear = this.year(c.release_date ?? c.first_air_date);
+        return {
+          id: c.id,
+          media_type: (c.media_type ?? 'movie') as MediaType,
+          title: c.title ?? c.name ?? '',
+          job: c.job ?? '',
+          ...(c.department ? { department: c.department } : {}),
+          ...(releaseYear !== undefined ? { release_year: releaseYear } : {}),
+          ...this.urlField('poster_url', c.poster_path, POSTER_SIZE),
+        };
+      });
 
     return {
       id: raw.id,
@@ -678,8 +688,12 @@ export class TmdbService {
     ctx: Context,
     language?: string,
   ): Promise<PaginatedSummary> {
+    const sort =
+      params.media_type === 'tv'
+        ? params.sort_by.replace('primary_release_date.', 'first_air_date.')
+        : params.sort_by;
     const qs = new URLSearchParams({
-      sort_by: params.sort_by,
+      sort_by: params.media_type === 'tv' && sort.startsWith('revenue.') ? 'popularity.desc' : sort,
       include_adult: String(params.include_adult),
       page: String(params.page),
       language: language ?? this.defaultLanguage,

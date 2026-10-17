@@ -87,7 +87,12 @@ export const tmdbSearchTitles = tool('tmdb_search_titles', {
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [{ type: 'text', text: `No results (${result.total_results} total).` }];
+      return [
+        {
+          type: 'text',
+          text: `No results (${result.total_results} total; page ${result.page}/${result.total_pages}).`,
+        },
+      ];
     }
     const lines = [
       `**${result.total_results} results** (page ${result.page}/${result.total_pages})\n`,

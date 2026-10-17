@@ -23,7 +23,9 @@ const ServerConfigSchema = z.object({
   defaultRegion: z
     .string()
     .default('US')
-    .describe('Default ISO 3166-1 region hint for region-aware error messages.'),
+    .describe(
+      'ISO 3166-1 country example in discovery missing-region errors; never a query default.',
+    ),
 });
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;

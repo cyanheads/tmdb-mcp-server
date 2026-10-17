@@ -288,6 +288,20 @@ describe('TmdbService.getSeason (series_id echo + guest stars)', () => {
 });
 
 describe('TmdbService.getPerson (recency-ordered, capped credits, gender label)', () => {
+  it('keeps upstream tie order and unknown dates last on the default page', async () => {
+    const cast = Array.from({ length: 51 }, (_, id) => ({
+      id,
+      title: String(id),
+      release_date: id === 0 ? '' : '2020-01-01',
+    }));
+    const svc = await initService({ '/person/1': { id: 1, combined_credits: { cast, crew: [] } } });
+    const result = await svc.getPerson(1, ctx);
+    expect(result.cast_credits.map((c) => c.id)).toEqual(
+      Array.from({ length: 50 }, (_, i) => i + 1),
+    );
+    expect(result.cast_credits_total).toBe(51);
+    expect(result).not.toHaveProperty('credits_page');
+  });
   it('sorts credits by release year desc and maps gender to a label', async () => {
     const svc = await initService({
       '/person/287': {
@@ -318,6 +332,46 @@ describe('TmdbService.getPerson (recency-ordered, capped credits, gender label)'
 });
 
 describe('TmdbService.discover (dot-notation translation)', () => {
+  it.each([
+    ['primary_release_date.asc', 'first_air_date.asc'],
+    ['primary_release_date.desc', 'first_air_date.desc'],
+    ['revenue.asc', 'popularity.desc'],
+    ['revenue.desc', 'popularity.desc'],
+  ])('maps TV sort %s to %s', async (sort_by, expected) => {
+    const svc = await initService({ '/discover/tv': { results: [] } });
+    const fetch = vi.spyOn(await import('@cyanheads/mcp-ts-core/utils'), 'fetchWithTimeout');
+    await svc.discover({ media_type: 'tv', sort_by, page: 1, include_adult: false }, ctx);
+    const qs = new URL(String(fetch.mock.calls.at(-1)?.[0])).searchParams;
+    expect(qs.get('sort_by')).toBe(expected);
+    expect([...qs.keys()].filter((key) => key.includes('date'))).toEqual([]);
+    await svc.discover(
+      {
+        media_type: 'tv',
+        sort_by,
+        page: 1,
+        include_adult: false,
+        release_date_gte: '2000-01-01',
+        release_date_lte: '2030-12-31',
+      },
+      ctx,
+    );
+    const bounded = new URL(String(fetch.mock.calls.at(-1)?.[0])).searchParams;
+    expect(bounded.get('first_air_date.gte')).toBe('2000-01-01');
+    expect(bounded.get('first_air_date.lte')).toBe('2030-12-31');
+    vi.restoreAllMocks();
+  });
+  it.each(['primary_release_date.asc', 'primary_release_date.desc', 'revenue.asc', 'revenue.desc'])(
+    'preserves movie sort %s without inventing date bounds',
+    async (sort_by) => {
+      const svc = await initService({ '/discover/movie': { results: [] } });
+      const fetch = vi.spyOn(await import('@cyanheads/mcp-ts-core/utils'), 'fetchWithTimeout');
+      await svc.discover({ media_type: 'movie', sort_by, page: 1, include_adult: false }, ctx);
+      const qs = new URL(String(fetch.mock.calls.at(-1)?.[0])).searchParams;
+      expect(qs.get('sort_by')).toBe(sort_by);
+      expect([...qs.keys()].filter((key) => key.includes('date'))).toEqual([]);
+      vi.restoreAllMocks();
+    },
+  );
   it('builds dot-notation range params and joins arrays correctly', async () => {
     // Capture the exact URL the service constructs to verify the snake→dot translation.
     const urls: string[] = [];

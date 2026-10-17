@@ -6,7 +6,7 @@
  */
 
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   initServiceForTools,
@@ -23,13 +23,95 @@ vi.mock('@cyanheads/mcp-ts-core/utils', async (importActual) => {
 const { tmdbDiscoverTitles } = await import(
   '@/mcp-server/tools/definitions/tmdb-discover-titles.tool.js'
 );
+const { tmdbSearchTitles } = await import(
+  '@/mcp-server/tools/definitions/tmdb-search-titles.tool.js'
+);
+const { tmdbGetTrending } = await import(
+  '@/mcp-server/tools/definitions/tmdb-get-trending.tool.js'
+);
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   setRoutes(STARTUP_ROUTES);
 });
 
 describe('tmdbDiscoverTitles', () => {
+  it.each([
+    ['search', tmdbSearchTitles, { query: 'zzxqq', page: 3 }, '/search/multi', 'No results'],
+    ['discover', tmdbDiscoverTitles, { media_type: 'tv', page: 3 }, '/discover/tv', 'No results'],
+    ['trending', tmdbGetTrending, { page: 3 }, '/trending/all/week', 'No trending results'],
+  ] as const)(
+    '%s preserves empty and populated pagination on both surfaces',
+    async (_name, definition, input, route, emptyText) => {
+      for (const total_pages of [0, 1]) {
+        await initServiceForTools({
+          [route]: { page: 3, total_pages, total_results: 0, results: [] },
+        });
+        const result = await runToolContract(definition, input);
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          page: 3,
+          total_pages,
+          total_results: 0,
+          totalCount: 0,
+        });
+        const text = result.content
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text)
+          .join('\n');
+        expect(text).toContain(emptyText);
+        expect(text).toContain(`page 3/${total_pages}`);
+        expect(text).toContain('TMDB API');
+        expect(text).toContain(
+          String((result.structuredContent as Record<string, unknown>).notice),
+        );
+      }
+      await initServiceForTools({
+        [route]: {
+          page: 3,
+          total_pages: 4,
+          total_results: 61,
+          results: [{ id: 42, media_type: 'tv', name: 'A show' }],
+        },
+      });
+      const populated = await runToolContract(definition, input);
+      expect(populated.isError).not.toBe(true);
+      expect(populated.structuredContent).toMatchObject({
+        page: 3,
+        total_pages: 4,
+        total_results: 61,
+      });
+      expect(JSON.stringify(populated.content)).toContain('page 3/4');
+      expect(JSON.stringify(populated.content)).toContain('A show');
+      expect(JSON.stringify(populated.content)).toContain('id 42');
+    },
+  );
+  it.each(['revenue.asc', 'revenue.desc'] as const)(
+    'discloses TV %s fallback on both surfaces',
+    async (sort_by) => {
+      await initServiceForTools({
+        '/discover/tv': { page: 1, total_pages: 0, total_results: 0, results: [] },
+      });
+      const result = await runToolContract(tmdbDiscoverTitles, {
+        media_type: 'tv',
+        sort_by,
+        with_cast: [1],
+        with_crew: [2],
+      });
+      const text = JSON.stringify(result.content);
+      expect(result.structuredContent).toMatchObject({ page: 1, total_results: 0 });
+      for (const fragment of [
+        'popularity.desc',
+        'movie-only',
+        'with_cast and with_crew',
+        'No titles matched',
+      ]) {
+        expect(text).toContain(fragment);
+        expect(JSON.stringify(result.structuredContent)).toContain(fragment);
+      }
+    },
+  );
   it('returns filtered, sorted results (headline path)', async () => {
     await initServiceForTools({
       '/discover/movie': {
@@ -80,13 +162,36 @@ describe('tmdbDiscoverTitles', () => {
     });
   });
 
-  it('puts the contract recovery on the wire for region_required', async () => {
-    /**
-     * Declaring `recovery` is not the same as sending it: the throw site has to forward
-     * the resolver, and the framework mirrors `data.recovery.hint` into the error
-     * `content[]`. Pinning it against the contract entry keeps the two from drifting and
-     * catches a throw site that drops the resolver.
-     */
+  it.each(['GB', 'DE'])(
+    'uses configured %s only as a recovery example on both surfaces',
+    async (region) => {
+      vi.stubEnv('TMDB_DEFAULT_REGION', region);
+      await initServiceForTools();
+      for (const watch_region of [undefined, '']) {
+        const result = await runToolContract(tmdbDiscoverTitles, {
+          media_type: 'tv',
+          with_watch_providers: [8],
+          watch_region,
+        });
+        expect(result.isError).toBe(true);
+        const hint = `Provide watch_region (ISO 3166-1, e.g. watch_region: "${region}") — streaming availability is region-specific and cannot be queried globally.`;
+        expect(result.structuredContent).toMatchObject({
+          error: {
+            code: JsonRpcErrorCode.ValidationError,
+            data: { reason: 'region_required', recovery: { hint } },
+          },
+        });
+        const text = result.content
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text)
+          .join('\n');
+        expect(text).toContain(hint);
+      }
+    },
+  );
+
+  it('keeps a concrete recovery on a direct handler error', async () => {
+    // Direct callers receive the runtime hint as well as the framework envelope.
     await initServiceForTools();
     const declared = tmdbDiscoverTitles.errors?.find((e) => e.reason === 'region_required');
     expect(declared?.recovery).toBeTypeOf('string');
@@ -98,8 +203,39 @@ describe('tmdbDiscoverTitles', () => {
       watch_region: '',
     });
     await expect(tmdbDiscoverTitles.handler(input, ctx)).rejects.toMatchObject({
-      data: { reason: 'region_required', recovery: { hint: declared?.recovery } },
+      data: {
+        reason: 'region_required',
+        recovery: { hint: expect.stringContaining('watch_region') },
+      },
     });
+  });
+
+  it('forwards only caller-selected regions and allows no provider filter', async () => {
+    vi.stubEnv('TMDB_DEFAULT_REGION', 'DE');
+    await initServiceForTools({ '/discover/movie': { results: [] } });
+    const fetch = vi.spyOn(await import('@cyanheads/mcp-ts-core/utils'), 'fetchWithTimeout');
+    const explicit = await runToolContract(tmdbDiscoverTitles, {
+      media_type: 'movie',
+      with_watch_providers: [8],
+      watch_region: 'GB',
+    });
+    expect(explicit.isError).not.toBe(true);
+    expect(new URL(String(fetch.mock.calls.at(-1)?.[0])).searchParams.get('watch_region')).toBe(
+      'GB',
+    );
+    for (const with_watch_providers of [undefined, []]) {
+      const result = await runToolContract(tmdbDiscoverTitles, {
+        media_type: 'movie',
+        with_watch_providers,
+      });
+      expect(result.isError).not.toBe(true);
+      expect(new URL(String(fetch.mock.calls.at(-1)?.[0])).searchParams.has('watch_region')).toBe(
+        false,
+      );
+    }
+    fetch.mockClear();
+    await runToolContract(tmdbDiscoverTitles, { media_type: 'movie', with_watch_providers: [8] });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('notices that with_networks is ignored for movie', async () => {

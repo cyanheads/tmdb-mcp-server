@@ -83,7 +83,14 @@ describe('tmdb resources', () => {
         id: 287,
         name: 'Brad Pitt',
         popularity: 1,
-        combined_credits: { cast: [], crew: [] },
+        combined_credits: {
+          cast: Array.from({ length: 51 }, (_, id) => ({
+            id,
+            title: `Credit ${id}`,
+            release_date: '2020-01-01',
+          })),
+          crew: [],
+        },
       },
     });
     const ctx = createMockContext({
@@ -93,6 +100,12 @@ describe('tmdb resources', () => {
     const params = tmdbPersonResource.params!.parse({ person_id: '287' });
     const person = await tmdbPersonResource.handler(params, ctx);
     expect(person).toMatchObject({ id: 287, name: 'Brad Pitt' });
+    expect(person).toMatchObject({
+      cast_credits: Array.from({ length: 50 }, (_, id) => expect.objectContaining({ id })),
+      cast_credits_total: 51,
+    });
+    expect(person).not.toHaveProperty('credits_page');
+    expect(person).not.toHaveProperty('next_credits_page');
   });
 
   it('maps a 404 to the movie_not_found contract', async () => {

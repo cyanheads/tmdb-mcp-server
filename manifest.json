@@ -52,7 +52,7 @@
     "tmdb_default_region": {
       "type": "string",
       "title": "Default Region",
-      "description": "Default ISO 3166-1 country hint (e.g. 'US') used in region-aware error messages.",
+      "description": "ISO 3166-1 country example in discovery missing-watch_region errors; never a query default.",
       "default": "US",
       "required": false
     }

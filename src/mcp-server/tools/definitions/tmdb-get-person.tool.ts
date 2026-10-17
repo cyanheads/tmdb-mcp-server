@@ -1,6 +1,6 @@
 /**
  * @fileoverview tmdb_get_person — person detail + full filmography (combined_credits).
- * Credits are recency-ordered and capped to a display size; truncation is disclosed.
+ * Credits are year-ordered and paged independently across cast and crew.
  * @module mcp-server/tools/definitions/tmdb-get-person.tool
  */
 
@@ -40,9 +40,17 @@ const PersonCrewCreditSchema = z
 export const tmdbGetPerson = tool('tmdb_get_person', {
   title: 'tmdb-mcp-server: get person',
   description:
-    'Fetch person detail and full filmography by TMDB person id. Returns biography, birth/death dates, place of birth, known-for department, aliases, gender, and the combined_credits filmography split into cast and crew credits (each recency-ordered, most recent first, capped to a display size — totals disclosed). Also returns IMDb id and the extended cross-platform id set (Wikidata, social handles) for chaining.',
+    'Fetch person detail and filmography by TMDB person id. Returns biography, birth/death dates, place of birth, known-for department, aliases, gender, and combined cast and crew credits. credits_page selects 50 entries per list, ordered by release year descending with unknown years last; ties keep TMDB order. Totals and next_credits_page support retrieving every credit. Also returns IMDb and cross-platform ids (Wikidata, social handles).',
   annotations: { readOnlyHint: true, idempotentHint: true },
   input: z.object({
+    credits_page: z
+      .number()
+      .int()
+      .positive()
+      .default(1)
+      .describe(
+        'Filmography page (1-indexed), up to 50 cast and 50 crew credits independently per page. Past-end pages return empty lists.',
+      ),
     person_id: z
       .number()
       .int()
@@ -56,6 +64,13 @@ export const tmdbGetPerson = tool('tmdb_get_person', {
       ),
   }),
   output: z.object({
+    credits_page: z.number().describe('Current filmography page (1-indexed).'),
+    next_credits_page: z
+      .number()
+      .optional()
+      .describe(
+        'Next filmography page when either list has remaining credits. Omitted after exhaustion.',
+      ),
     id: z.number().describe('TMDB person id.'),
     name: z.string().describe('Person name.'),
     biography: z.string().optional().describe('Biography. Omitted when absent.'),
@@ -80,12 +95,16 @@ export const tmdbGetPerson = tool('tmdb_get_person', {
     profile_url: z.string().optional().describe('Full profile image URL. Omitted when none.'),
     cast_credits: z
       .array(PersonCastCreditSchema)
-      .describe('Cast filmography (recency-ordered, capped).'),
+      .describe(
+        'Current cast filmography page (up to 50, release-year descending; ties keep TMDB order).',
+      ),
     crew_credits: z
       .array(PersonCrewCreditSchema)
-      .describe('Crew filmography (recency-ordered, capped).'),
-    cast_credits_total: z.number().describe('Total cast credits before the display cap.'),
-    crew_credits_total: z.number().describe('Total crew credits before the display cap.'),
+      .describe(
+        'Current crew filmography page (up to 50, release-year descending; ties keep TMDB order).',
+      ),
+    cast_credits_total: z.number().describe('Total cast credits across all pages.'),
+    crew_credits_total: z.number().describe('Total crew credits across all pages.'),
     external_ids: z
       .record(z.string(), z.string())
       .optional()
@@ -93,11 +112,16 @@ export const tmdbGetPerson = tool('tmdb_get_person', {
   }),
   enrichment: {
     attribution: z.string().describe(TMDB_ATTRIBUTION),
-    totalCount: z.number().describe('Total combined credits (cast + crew) before any display cap.'),
-    truncated: z.boolean().optional().describe('True when either credit list was capped.'),
+    totalCount: z.number().describe('Total combined credits (cast + crew) across all pages.'),
+    truncated: z.boolean().optional().describe('True when another filmography page is available.'),
     shown: z.number().optional().describe('Total credits returned across both lists.'),
     cap: z.number().optional().describe('Per-list display cap that was applied.'),
-    notice: z.string().optional().describe('Disclosure when the filmography was capped.'),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Current-page disclosure and executable continuation when another page is available.',
+      ),
   },
   errors: [
     {
@@ -110,26 +134,43 @@ export const tmdbGetPerson = tool('tmdb_get_person', {
   ],
 
   async handler(input, ctx) {
-    const person = await getTmdbService().getPerson(input.person_id, ctx, input.language);
+    const person = await getTmdbService().getPerson(
+      input.person_id,
+      ctx,
+      input.language,
+      input.credits_page,
+    );
 
     ctx.enrich({ attribution: TMDB_ATTRIBUTION });
     ctx.enrich.total(person.cast_credits_total + person.crew_credits_total);
 
-    const castCapped = person.cast_credits_total > person.cast_credits.length;
-    const crewCapped = person.crew_credits_total > person.crew_credits.length;
-    if (castCapped || crewCapped) {
+    const hasNext =
+      input.credits_page * 50 < Math.max(person.cast_credits_total, person.crew_credits_total);
+    if (hasNext) {
+      const continuation = {
+        person_id: input.person_id,
+        credits_page: input.credits_page + 1,
+        ...(input.language !== undefined ? { language: input.language } : {}),
+      };
       ctx.enrich.truncated({
         shown: person.cast_credits.length + person.crew_credits.length,
         cap: 50,
-        guidance: `Filmography capped to the most recent 50 per list (cast ${person.cast_credits_total}, crew ${person.crew_credits_total} total). Older credits are omitted.`,
+        guidance: `Credits page ${input.credits_page} is capped at 50 per list (cast ${person.cast_credits_total}, crew ${person.crew_credits_total} total). Continue with tmdb_get_person(${JSON.stringify(continuation)}).`,
       });
     }
 
-    return person;
+    return {
+      ...person,
+      credits_page: input.credits_page,
+      ...(hasNext ? { next_credits_page: input.credits_page + 1 } : {}),
+    };
   },
 
   format: (p) => {
     const lines = [`# ${p.name}`];
+    lines.push(
+      `Credits page: ${p.credits_page}${p.next_credits_page !== undefined ? ` | Next credits page: ${p.next_credits_page}` : ''}`,
+    );
     const facts = [`**id:** ${p.id}`, `**popularity:** ${p.popularity.toFixed(1)}`];
     if (p.known_for_department) facts.push(`**known for:** ${p.known_for_department}`);
     if (p.gender) facts.push(`**gender:** ${p.gender}`);

@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.4-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/tmdb-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.2.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/tmdb-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/tmdb-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.2%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.1.4-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/tmdb-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/tmdb-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/tmdb-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.3%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -23,7 +23,7 @@
 
 ## Overview
 
-Movie and TV metadata powered by The Movie Database (TMDB). Search titles and people by name, pull full credits and filmographies, discover titles by filtered criteria, track trending content, and check region-aware streaming availability from any MCP client. Runs as a stdio process or a local Streamable HTTP server.
+Movie and TV metadata powered by The Movie Database (TMDB). Search titles and people by name, pull full credits and filmographies, discover titles by filtered criteria, track trending content, and check where to stream in your region.
 
 ### Tools
 
@@ -44,7 +44,7 @@ Movie and TV metadata powered by The Movie Database (TMDB). Search titles and pe
 |:---|:---|
 | `tmdb://movie/{movie_id}` | Movie detail by id, as injectable context — the same enriched record as `tmdb_get_movie`. |
 | `tmdb://tv/{series_id}` | Show detail by id — the same enriched record as `tmdb_get_show`. |
-| `tmdb://person/{person_id}` | Person detail and filmography by id — the same record as `tmdb_get_person`. |
+| `tmdb://person/{person_id}` | Person detail with the first 50 cast and 50 crew credits and full totals; use `tmdb_get_person` for further pages. |
 
 All resource data is also reachable via tools — the three resources are convenience wrappers over the detail service methods, so tool-only clients lose nothing.
 
@@ -85,7 +85,8 @@ All resource data is also reachable via tools — the three resources are conven
 ### `tmdb_get_person` <sub>tool</sub>
 
 - Biography, birth/death dates, place of birth, known-for department, aliases, gender label
-- `combined_credits` split into `cast_credits` and `crew_credits`, recency-ordered (most recent first) and capped to 50 per list — the pre-cap totals are reported and truncation is disclosed in the enrichment
+- `combined_credits` split into `cast_credits` and `crew_credits`, ordered by release year descending (unknown years last; ties keep TMDB order). `credits_page` defaults to 1 and selects up to 50 entries from each list independently; full totals remain available on every page
+- Follow `next_credits_page` with `tmdb_get_person({"person_id":17419,"credits_page":2})`; continuation guidance preserves a supplied `language`. Past-end pages return empty lists successfully. The person resource retains the first-page record without tool paging fields
 - IMDb id plus the extended cross-platform id set (Wikidata, social handles) for chaining to other servers
 
 ---
@@ -93,7 +94,7 @@ All resource data is also reachable via tools — the three resources are conven
 ### `tmdb_discover_titles` <sub>tool</sub>
 
 - Filter by `with_genres`/`without_genres`, exact `year` or a `release_date_gte`/`lte` window, `vote_average` range, `vote_count_gte` floor, `with_cast`/`with_crew` (movie), `with_networks` (tv), `with_watch_providers` + `watch_region`, `with_original_language`, and `runtime` range
-- Sort by popularity, revenue, vote average, vote count, or release date. Pair `vote_average.desc` with `vote_count_gte` (~100–1000) so a 10.0-from-3-votes title does not dominate
+- Sort by popularity, revenue, vote average, vote count, or release date. TV `primary_release_date.asc/desc` maps to first-air-date order; TV revenue sorts use `popularity.desc` with a notice. Set `release_date_lte` to exclude future releases. Pair `vote_average.desc` with `vote_count_gte` (~100–1000) so a 10.0-from-3-votes title does not dominate
 - `with_cast`/`with_crew` are movie-only and `with_networks` is tv-only; inapplicable filters produce a notice. `with_watch_providers` requires `watch_region`; omitting it returns `region_required`.
 
 ---
@@ -132,7 +133,7 @@ All resource data is also reachable via tools — the three resources are conven
 
 ### `tmdb://person/{person_id}` <sub>resource</sub>
 
-- Same enriched record as `tmdb_get_person` — `application/json`
+- Person detail with the first 50 cast and 50 crew credits and full totals — `application/json`; use `tmdb_get_person` for further pages
 - `person_id` comes from `tmdb_search_titles` (mode "person")
 - Typed `person_not_found` error when TMDB returns 404 for the id
 
@@ -263,7 +264,7 @@ All configuration is validated at startup via Zod schemas. Key environment varia
 |:---|:---|:---|
 | `TMDB_API_KEY` | **Required.** TMDB v4 API Read Access Token (JWT), sent as `Authorization: Bearer`. Not the v3 `?api_key=` value. | — |
 | `TMDB_LANGUAGE` | Default response language as ISO 639-1, optionally with region (e.g. `en-US`). A per-call `language` input overrides it. | `en-US` |
-| `TMDB_DEFAULT_REGION` | Default ISO 3166-1 country hint used in region-aware error messages. `tmdb_get_watch_providers` still requires an explicit `watch_region`. | `US` |
+| `TMDB_DEFAULT_REGION` | ISO 3166-1 country example in discovery's missing-`watch_region` recovery hint. Never defaults queries; `tmdb_get_watch_providers` still requires an explicit region. | `US` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`. | `stdio` |
 | `MCP_HTTP_PORT` | Port for the HTTP server. | `3010` |
 | `MCP_AUTH_MODE` | Auth mode: `none`, `jwt`, or `oauth`. | `none` |

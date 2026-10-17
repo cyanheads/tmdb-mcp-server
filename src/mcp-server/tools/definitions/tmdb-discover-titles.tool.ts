@@ -7,6 +7,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { getServerConfig } from '@/config/server-config.js';
 import { type DiscoverParams, getTmdbService } from '@/services/tmdb/tmdb-service.js';
 import {
   listEnrichment,
@@ -52,7 +53,7 @@ export const tmdbDiscoverTitles = tool('tmdb_discover_titles', {
       ])
       .default('popularity.desc')
       .describe(
-        'Sort order. "popularity.desc" (default) for what is broadly relevant now; "vote_average.desc" for critically rated (pair with vote_count_gte to avoid tiny-sample outliers); "revenue.desc" for box office; "primary_release_date.desc" for newest. For tv, primary_release_date.desc sorts by first-air date; avoid first_air_date.desc — TMDB returns bogus future-dated entries for that sort.',
+        'Sort order. "popularity.desc" (default) for broadly relevant titles; "vote_average.desc" for highest rated (pair with vote_count_gte); "revenue.desc" for movie box office. For tv, primary_release_date.asc/desc maps to first-air-date order; revenue sorts use popularity.desc with a notice. Future releases remain eligible; set release_date_lte to exclude them.',
       ),
     with_genres: z
       .array(z.number().int())
@@ -173,7 +174,11 @@ export const tmdbDiscoverTitles = tool('tmdb_discover_titles', {
     const region =
       input.watch_region && input.watch_region.length > 0 ? input.watch_region : undefined;
     if (providers && !region) {
-      throw ctx.fail('region_required', undefined, ctx.recoveryFor('region_required'));
+      throw ctx.fail('region_required', undefined, {
+        recovery: {
+          hint: `Provide watch_region (ISO 3166-1, e.g. watch_region: "${getServerConfig().defaultRegion}") — streaming availability is region-specific and cannot be queried globally.`,
+        },
+      });
     }
 
     const params: DiscoverParams = {
@@ -207,6 +212,10 @@ export const tmdbDiscoverTitles = tool('tmdb_discover_titles', {
     const ignoredForTv: string[] = [];
     const ignoredForMovie: string[] = [];
     if (input.media_type === 'tv') {
+      if (input.sort_by.startsWith('revenue.'))
+        notices.push(
+          'Revenue sorting is movie-only on TMDB and was ignored for tv; popularity.desc was used.',
+        );
       if (input.with_cast?.length) ignoredForTv.push('with_cast');
       if (input.with_crew?.length) ignoredForTv.push('with_crew');
     }
@@ -233,7 +242,12 @@ export const tmdbDiscoverTitles = tool('tmdb_discover_titles', {
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [{ type: 'text', text: `No results (${result.total_results} total).` }];
+      return [
+        {
+          type: 'text',
+          text: `No results (${result.total_results} total; page ${result.page}/${result.total_pages}).`,
+        },
+      ];
     }
     const lines = [
       `**${result.total_results} results** (page ${result.page}/${result.total_pages})\n`,
