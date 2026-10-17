@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.5](changelog/0.1.x/0.1.5.md) — 2026-10-17
+
+Correct TV discovery sorting and retrieve complete person filmographies with paging.
+
 ## [0.1.4](changelog/0.1.x/0.1.4.md) — 2026-10-07
 
 Input repair and request IDs on errors, with updated Docker and registry packaging.
