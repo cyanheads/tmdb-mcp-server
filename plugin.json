@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "tmdb-mcp-server",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Search movies, TV, and people on The Movie Database (TMDB) — credits, ratings, trailers, images, recommendations, and region-aware streaming availability via MCP. STDIO or Streamable HTTP.",
   "author": {
     "name": "Casey Hand",

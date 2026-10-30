@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.0](changelog/0.2.x/0.2.0.md) — 2026-10-30
+
+Publish a TMDB research guide over MCP and preserve literal text and media links in formatted results.
+
 ## [0.1.5](changelog/0.1.x/0.1.5.md) — 2026-10-17
 
 Correct TV discovery sorting and retrieve complete person filmographies with paging.
