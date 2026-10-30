@@ -1,0 +1,26 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "tmdb-mcp-server",
+  "version": "0.1.5",
+  "description": "Search movies, TV, and people on The Movie Database (TMDB) — credits, ratings, trailers, images, recommendations, and region-aware streaming availability via MCP. STDIO or Streamable HTTP.",
+  "author": {
+    "name": "Casey Hand",
+    "email": "casey@caseyjhand.com",
+    "url": "https://caseyjhand.com"
+  },
+  "homepage": "https://github.com/cyanheads/tmdb-mcp-server#readme",
+  "repository": "https://github.com/cyanheads/tmdb-mcp-server",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "tmdb",
+    "movies",
+    "tv",
+    "film",
+    "streaming",
+    "stdio",
+    "streamable-http"
+  ]
+}

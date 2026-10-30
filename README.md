@@ -1,13 +1,13 @@
 <div align="center">
   <h1>@cyanheads/tmdb-mcp-server</h1>
   <p><b>Search movies, TV, and people on The Movie Database (TMDB) — credits, ratings, trailers, images, recommendations, and region-aware streaming availability via MCP. STDIO or Streamable HTTP.</b>
-  <div>8 Tools • 3 Resources</div>
+  <div>8 Tools • 4 Resources • 1 Skill</div>
   </p>
 </div>
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.5-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/tmdb-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/tmdb-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/tmdb-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.3%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.1.5-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/tmdb-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.4.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/tmdb-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/tmdb-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -45,6 +45,7 @@ Movie and TV metadata powered by The Movie Database (TMDB). Search titles and pe
 | `tmdb://movie/{movie_id}` | Movie detail by id, as injectable context — the same enriched record as `tmdb_get_movie`. |
 | `tmdb://tv/{series_id}` | Show detail by id — the same enriched record as `tmdb_get_show`. |
 | `tmdb://person/{person_id}` | Person detail with the first 50 cast and 50 crew credits and full totals; use `tmdb_get_person` for further pages. |
+| `skill://tmdb-guide/SKILL.md` | Agent guide for regional watchlists, directing credits, filmography paging, and season traversal. |
 
 ## Capability reference
 
@@ -134,6 +135,11 @@ Movie and TV metadata powered by The Movie Database (TMDB). Search titles and pe
 - `person_id` comes from `tmdb_search_titles` (mode "person")
 - Typed `person_not_found` error when TMDB returns 404 for the id
 
+### `skill://tmdb-guide/SKILL.md` <sub>resource</sub>
+
+- The `tmdb-guide` skill covers identifier sources, regional provider categories, directing-credit verification, and multi-step research gates
+- Available through MCP skill discovery and resource reads; included in plugin installs, npm, Docker, and MCPB bundles
+
 ## Features
 
 Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core): stdio and Streamable HTTP transports, pluggable auth (`none` / `jwt` / `oauth`), swappable storage (`in-memory`, `filesystem`, `Supabase`, `Cloudflare KV/R2/D1`), structured logging with optional OpenTelemetry tracing.
@@ -157,37 +163,21 @@ Agent-friendly output:
 
 A TMDB API Read Access Token is required. Create a free TMDB account, then copy the **API Read Access Token** (a v4 JWT) from your [API settings](https://www.themoviedb.org/settings/api) — this server authenticates v3 endpoints with `Authorization: Bearer <token>`, not the legacy `?api_key=` query parameter.
 
-Add the following to your MCP client configuration file.
+Add it to Claude Code:
 
-```json
-{
-  "mcpServers": {
-    "tmdb-mcp-server": {
-      "type": "stdio",
-      "command": "bunx",
-      "args": ["@cyanheads/tmdb-mcp-server@latest"],
-      "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "MCP_LOG_LEVEL": "info",
-        "TMDB_API_KEY": "your-tmdb-read-access-token"
-      }
-    }
-  }
-}
+```sh
+claude mcp add tmdb-mcp-server -e TMDB_API_KEY=your-tmdb-read-access-token -- npx -y @cyanheads/tmdb-mcp-server
 ```
 
-Or with npx (no Bun required):
+For other clients, add this to the MCP configuration file:
 
 ```json
 {
   "mcpServers": {
     "tmdb-mcp-server": {
-      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@cyanheads/tmdb-mcp-server@latest"],
+      "args": ["-y", "@cyanheads/tmdb-mcp-server"],
       "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "MCP_LOG_LEVEL": "info",
         "TMDB_API_KEY": "your-tmdb-read-access-token"
       }
     }
@@ -195,63 +185,7 @@ Or with npx (no Bun required):
 }
 ```
 
-Or with Docker:
-
-```json
-{
-  "mcpServers": {
-    "tmdb-mcp-server": {
-      "type": "stdio",
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "-e", "MCP_TRANSPORT_TYPE=stdio",
-        "-e", "TMDB_API_KEY=your-tmdb-read-access-token",
-        "ghcr.io/cyanheads/tmdb-mcp-server:latest"
-      ]
-    }
-  }
-}
-```
-
-For Streamable HTTP, set the transport and start the server:
-
-```sh
-MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 TMDB_API_KEY=... bun run start:http
-# Server listens at http://localhost:3010/mcp
-```
-
-### Prerequisites
-
-- [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
-- A TMDB **API Read Access Token** (v4 JWT) — free from your [TMDB API settings](https://www.themoviedb.org/settings/api).
-
-### Installation
-
-1. **Clone the repository:**
-
-```sh
-git clone https://github.com/cyanheads/tmdb-mcp-server.git
-```
-
-2. **Navigate into the directory:**
-
-```sh
-cd tmdb-mcp-server
-```
-
-3. **Install dependencies:**
-
-```sh
-bun install
-```
-
-4. **Configure environment:**
-
-```sh
-cp .env.example .env
-# edit .env and set TMDB_API_KEY
-```
+For Docker or a source build, see [Running the server](#running-the-server).
 
 ## Configuration
 
@@ -277,6 +211,14 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 
 ### Local development
 
+Requires [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
+
+```sh
+git clone https://github.com/cyanheads/tmdb-mcp-server.git
+cd tmdb-mcp-server && bun install
+cp .env.example .env   # set TMDB_API_KEY
+```
+
 - **Build and run:**
 
   ```sh
@@ -300,11 +242,10 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 ### Docker
 
 ```sh
-docker build -t tmdb-mcp-server .
-docker run --rm -e TMDB_API_KEY=your-token -p 3010:3010 tmdb-mcp-server
+docker run --rm -e TMDB_API_KEY=your-token -p 3010:3010 ghcr.io/cyanheads/tmdb-mcp-server:latest
 ```
 
-The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `/var/log/tmdb-mcp-server`. OpenTelemetry peer dependencies are installed by default — build with `--build-arg OTEL_ENABLED=false` to omit them.
+The image defaults to HTTP transport, stateless sessions, and logs to `/var/log/tmdb-mcp-server`. For stdio, use `docker run -i --rm -e MCP_TRANSPORT_TYPE=stdio -e TMDB_API_KEY=your-token ghcr.io/cyanheads/tmdb-mcp-server:latest`. Build locally with `docker build -t tmdb-mcp-server .`; OpenTelemetry peers are included by default, or omitted with `--build-arg OTEL_ENABLED=false`.
 
 ## Project structure
 
@@ -316,6 +257,7 @@ The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `
 | `src/mcp-server/resources` | Resource definitions (`*.resource.ts`) — movie, TV, and person detail. |
 | `src/services/tmdb` | TMDB v3 REST client. |
 | `tests/` | Unit and integration tests mirroring `src/`. |
+| `skills/` | Published agent guide for calling the TMDB tools. |
 
 ## Development guide
 
@@ -324,6 +266,7 @@ See [`AGENTS.md`](./AGENTS.md) (or [`CLAUDE.md`](./CLAUDE.md), the same content)
 - Handlers throw, framework catches — no `try/catch` in tool logic
 - Use `ctx.log` for request-scoped logging, `ctx.state` for tenant-scoped storage
 - Register new tools and resources via the barrels in `src/mcp-server/*/definitions/index.ts`
+- Wrap external API calls: validate raw → normalize to domain type → return output schema; never fabricate missing fields
 
 ## Attribution
 
