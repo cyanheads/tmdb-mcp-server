@@ -7,6 +7,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getTmdbService } from '@/services/tmdb/tmdb-service.js';
 import {
   listEnrichment,
+  noticeTrailer,
   renderSummaryItem,
   SummaryItemSchema,
   TMDB_ATTRIBUTION,
@@ -40,6 +41,7 @@ export const tmdbGetTrending = tool('tmdb_get_trending', {
       .describe('Ranked trending summary cards (up to 20 per page).'),
   }),
   enrichment: listEnrichment,
+  enrichmentTrailer: noticeTrailer,
 
   async handler(input, ctx) {
     const result = await getTmdbService().getTrending(

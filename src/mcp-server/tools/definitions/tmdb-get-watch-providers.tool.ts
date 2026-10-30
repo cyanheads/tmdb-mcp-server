@@ -7,8 +7,15 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getTmdbService } from '@/services/tmdb/tmdb-service.js';
-import { detailEnrichment, ProviderSchema, TMDB_ATTRIBUTION } from './_shared.js';
+import {
+  detailEnrichment,
+  noticeTrailer,
+  ProviderSchema,
+  renderProvider,
+  TMDB_ATTRIBUTION,
+} from './_shared.js';
 
 export const tmdbGetWatchProviders = tool('tmdb_get_watch_providers', {
   title: 'tmdb-mcp-server: get watch providers',
@@ -50,6 +57,7 @@ export const tmdbGetWatchProviders = tool('tmdb_get_watch_providers', {
     free: z.array(ProviderSchema).describe('Free providers. Empty when none.'),
   }),
   enrichment: detailEnrichment,
+  enrichmentTrailer: noticeTrailer,
   errors: [
     {
       reason: 'title_not_found',
@@ -92,14 +100,12 @@ export const tmdbGetWatchProviders = tool('tmdb_get_watch_providers', {
 
   format: (r) => {
     const lines = [`# Watch providers — ${r.media_type} ${r.id} (region ${r.region})`];
-    if (r.link) lines.push(`**Link:** ${r.link}`);
+    if (r.link) lines.push(markdownLink('Watch options', r.link));
     const section = (label: string, providers: typeof r.flatrate) => {
       if (!providers.length) return;
       lines.push(`\n**${label}:**`);
       for (const p of providers) {
-        lines.push(
-          `- ${p.provider_name} (id ${p.provider_id}, priority ${p.display_priority})${p.logo_url ? ` ${p.logo_url}` : ''}`,
-        );
+        lines.push(`- ${renderProvider(p)}`);
       }
     };
     section('Stream (flatrate)', r.flatrate);

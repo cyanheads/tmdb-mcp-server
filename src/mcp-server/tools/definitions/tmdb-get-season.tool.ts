@@ -7,6 +7,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownImage } from '@cyanheads/mcp-ts-core/utils';
 import { getTmdbService } from '@/services/tmdb/tmdb-service.js';
 import { CastMemberSchema, detailEnrichment, renderCast, TMDB_ATTRIBUTION } from './_shared.js';
 
@@ -104,28 +105,30 @@ export const tmdbGetSeason = tool('tmdb_get_season', {
   },
 
   format: (s) => {
-    const lines = [`# ${s.name} (series ${s.series_id}, season ${s.season_number})`];
+    const lines = [
+      `**${escapeMarkdownInline(s.name)}** (series ${s.series_id}, season ${s.season_number})`,
+    ];
     const facts: string[] = [];
-    if (s.air_date) facts.push(`**air date:** ${s.air_date}`);
+    if (s.air_date) facts.push(`**air date:** ${escapeMarkdownInline(s.air_date)}`);
     if (s.vote_average !== undefined) facts.push(`**rating:** ${s.vote_average.toFixed(1)}`);
     facts.push(`**episodes:** ${s.episodes.length}`);
     lines.push(facts.join(' | '));
-    if (s.poster_url) lines.push(`![poster](${s.poster_url})`);
-    if (s.overview) lines.push(`\n${s.overview}`);
+    if (s.poster_url) lines.push(markdownImage('poster', s.poster_url));
+    if (s.overview) lines.push(`\n${escapeMarkdownInline(s.overview)}`);
     if (s.regular_cast?.length) {
       lines.push('\n**Regular cast:**', ...s.regular_cast.map((c) => `- ${renderCast(c)}`));
     }
     lines.push('\n**Episodes:**');
     for (const e of s.episodes) {
       const facts2: string[] = [];
-      if (e.air_date) facts2.push(e.air_date);
+      if (e.air_date) facts2.push(escapeMarkdownInline(e.air_date));
       if (e.runtime_minutes !== undefined) facts2.push(`${e.runtime_minutes} min`);
       if (e.vote_average !== undefined) facts2.push(`★${e.vote_average.toFixed(1)}`);
       lines.push(
-        `### E${e.episode_number}: ${e.name}${facts2.length ? ` (${facts2.join(', ')})` : ''}`,
+        `**E${e.episode_number}: ${escapeMarkdownInline(e.name)}**${facts2.length ? ` (${facts2.join(', ')})` : ''}`,
       );
-      if (e.overview) lines.push(e.overview);
-      if (e.still_url) lines.push(`![still](${e.still_url})`);
+      if (e.overview) lines.push(escapeMarkdownInline(e.overview));
+      if (e.still_url) lines.push(markdownImage('still', e.still_url));
       if (e.guest_stars?.length) {
         lines.push('**Guest stars:**', ...e.guest_stars.map((g) => `- ${renderCast(g)}`));
       }

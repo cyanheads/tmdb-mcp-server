@@ -6,8 +6,9 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownImage, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getTmdbService } from '@/services/tmdb/tmdb-service.js';
-import { MediaTypeSchema, TMDB_ATTRIBUTION } from './_shared.js';
+import { MediaTypeSchema, noticeTrailer, TMDB_ATTRIBUTION } from './_shared.js';
 
 const PersonCastCreditSchema = z
   .object({
@@ -123,6 +124,7 @@ export const tmdbGetPerson = tool('tmdb_get_person', {
         'Current-page disclosure and executable continuation when another page is available.',
       ),
   },
+  enrichmentTrailer: noticeTrailer,
   errors: [
     {
       reason: 'person_not_found',
@@ -167,26 +169,28 @@ export const tmdbGetPerson = tool('tmdb_get_person', {
   },
 
   format: (p) => {
-    const lines = [`# ${p.name}`];
+    const lines = [`**${escapeMarkdownInline(p.name)}**`];
     lines.push(
       `Credits page: ${p.credits_page}${p.next_credits_page !== undefined ? ` | Next credits page: ${p.next_credits_page}` : ''}`,
     );
     const facts = [`**id:** ${p.id}`, `**popularity:** ${p.popularity.toFixed(1)}`];
-    if (p.known_for_department) facts.push(`**known for:** ${p.known_for_department}`);
+    if (p.known_for_department)
+      facts.push(`**known for:** ${escapeMarkdownInline(p.known_for_department)}`);
     if (p.gender) facts.push(`**gender:** ${p.gender}`);
-    if (p.birthday) facts.push(`**born:** ${p.birthday}`);
-    if (p.deathday) facts.push(`**died:** ${p.deathday}`);
-    if (p.place_of_birth) facts.push(`**birthplace:** ${p.place_of_birth}`);
-    if (p.imdb_id) facts.push(`**imdb:** ${p.imdb_id}`);
+    if (p.birthday) facts.push(`**born:** ${escapeMarkdownInline(p.birthday)}`);
+    if (p.deathday) facts.push(`**died:** ${escapeMarkdownInline(p.deathday)}`);
+    if (p.place_of_birth) facts.push(`**birthplace:** ${escapeMarkdownInline(p.place_of_birth)}`);
+    if (p.imdb_id) facts.push(`**imdb:** ${escapeMarkdownInline(p.imdb_id)}`);
     lines.push(facts.join(' | '));
-    if (p.homepage) lines.push(`**homepage:** ${p.homepage}`);
-    if (p.also_known_as?.length) lines.push(`**also known as:** ${p.also_known_as.join(', ')}`);
-    if (p.profile_url) lines.push(`![profile](${p.profile_url})`);
-    if (p.biography) lines.push(`\n${p.biography}`);
+    if (p.homepage) lines.push(markdownLink('homepage', p.homepage));
+    if (p.also_known_as?.length)
+      lines.push(`**also known as:** ${p.also_known_as.map(escapeMarkdownInline).join(', ')}`);
+    if (p.profile_url) lines.push(markdownImage('profile', p.profile_url));
+    if (p.biography) lines.push(`\n${escapeMarkdownInline(p.biography)}`);
     if (p.external_ids)
       lines.push(
         `\n**External ids:** ${Object.entries(p.external_ids)
-          .map(([k, v]) => `${k}=${v}`)
+          .map(([k, v]) => `${escapeMarkdownInline(k)}=${escapeMarkdownInline(v)}`)
           .join(', ')}`,
       );
 
@@ -194,18 +198,20 @@ export const tmdbGetPerson = tool('tmdb_get_person', {
     for (const c of p.cast_credits) {
       const yr = c.release_year ? ` (${c.release_year})` : '';
       const rating = c.vote_average !== undefined ? ` ★${c.vote_average.toFixed(1)}` : '';
-      const poster = c.poster_url ? ` ${c.poster_url}` : '';
+      const poster = c.poster_url ? ` ${markdownImage('poster', c.poster_url)}` : '';
       lines.push(
-        `- ${c.title}${yr} [${c.media_type}, id ${c.id}]${c.character ? ` as ${c.character}` : ''}${rating}${poster}`,
+        `- ${escapeMarkdownInline(c.title)}${yr} [${c.media_type}, id ${c.id}]${c.character ? ` as ${escapeMarkdownInline(c.character)}` : ''}${rating}${poster}`,
       );
     }
 
     lines.push(`\n**Crew credits** (${p.crew_credits.length} of ${p.crew_credits_total}):`);
     for (const c of p.crew_credits) {
       const yr = c.release_year ? ` (${c.release_year})` : '';
-      const dept = c.department ? `, ${c.department}` : '';
-      const poster = c.poster_url ? ` ${c.poster_url}` : '';
-      lines.push(`- ${c.title}${yr} [${c.media_type}, id ${c.id}] — ${c.job}${dept}${poster}`);
+      const dept = c.department ? `, ${escapeMarkdownInline(c.department)}` : '';
+      const poster = c.poster_url ? ` ${markdownImage('poster', c.poster_url)}` : '';
+      lines.push(
+        `- ${escapeMarkdownInline(c.title)}${yr} [${c.media_type}, id ${c.id}] — ${escapeMarkdownInline(c.job)}${dept}${poster}`,
+      );
     }
 
     return [{ type: 'text', text: lines.join('\n') }];

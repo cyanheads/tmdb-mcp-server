@@ -7,6 +7,7 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
+import { escapeMarkdownInline, markdownImage, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 
 /** Mandatory TMDB attribution string, surfaced in every tool's enrichment. */
 export const TMDB_ATTRIBUTION =
@@ -145,17 +146,18 @@ export function renderSummaryItem(r: SummaryItem): string {
   if (r.vote_average !== undefined) facts.push(`rating ${r.vote_average.toFixed(1)}`);
   if (r.vote_count !== undefined) facts.push(`${r.vote_count} votes`);
   if (r.popularity !== undefined) facts.push(`pop ${r.popularity.toFixed(1)}`);
-  if (r.genre_names?.length) facts.push(`genres ${r.genre_names.join('/')}`);
-  if (r.known_for_department) facts.push(`dept ${r.known_for_department}`);
-  let line = `${r.title} (${facts.join(', ')})`;
-  if (r.poster_url) line += ` poster ${r.poster_url}`;
-  if (r.profile_url) line += ` profile ${r.profile_url}`;
-  if (r.overview) line += ` — ${r.overview}`;
+  if (r.genre_names?.length)
+    facts.push(`genres ${r.genre_names.map(escapeMarkdownInline).join('/')}`);
+  if (r.known_for_department) facts.push(`dept ${escapeMarkdownInline(r.known_for_department)}`);
+  let line = `${escapeMarkdownInline(r.title)} (${facts.join(', ')})`;
+  if (r.poster_url) line += ` ${markdownImage('poster', r.poster_url)}`;
+  if (r.profile_url) line += ` ${markdownImage('profile', r.profile_url)}`;
+  if (r.overview) line += ` — ${escapeMarkdownInline(r.overview)}`;
   if (r.known_for?.length) {
     line += ` [known for: ${r.known_for
       .map(
         (k) =>
-          `${k.title} (id ${k.id}, ${k.media_type}${k.poster_url ? `, poster ${k.poster_url}` : ''})`,
+          `${escapeMarkdownInline(k.title)} (id ${k.id}, ${k.media_type}${k.poster_url ? `, ${markdownImage('poster', k.poster_url)}` : ''})`,
       )
       .join('; ')}]`;
   }
@@ -170,39 +172,50 @@ export function renderSummaryList(label: string, items: SummaryItem[] | undefine
 
 /** Complete cast-member rendering. */
 export function renderCast(c: CastMember): string {
-  const parts = [`${c.name} (id ${c.id}`];
+  const parts = [`${escapeMarkdownInline(c.name)} (id ${c.id}`];
   if (c.order !== undefined) parts.push(`, order ${c.order}`);
   parts.push(')');
   let line = parts.join('');
-  if (c.character) line += ` as ${c.character}`;
-  if (c.profile_url) line += ` — profile ${c.profile_url}`;
+  if (c.character) line += ` as ${escapeMarkdownInline(c.character)}`;
+  if (c.profile_url) line += ` — ${markdownImage('profile', c.profile_url)}`;
   return line;
 }
 
 /** Complete crew-member rendering. */
 export function renderCrew(c: CrewMember): string {
-  let line = `${c.name} — ${c.job} (id ${c.id})`;
-  if (c.department) line += ` [${c.department}]`;
-  if (c.profile_url) line += ` — profile ${c.profile_url}`;
+  let line = `${escapeMarkdownInline(c.name)} — ${escapeMarkdownInline(c.job)} (id ${c.id})`;
+  if (c.department) line += ` [${escapeMarkdownInline(c.department)}]`;
+  if (c.profile_url) line += ` — ${markdownImage('profile', c.profile_url)}`;
   return line;
 }
 
 /** Complete trailer rendering. */
 export function renderTrailer(t: Trailer): string {
-  return `[${t.name}](${t.url}) — ${t.site}${t.type ? `, ${t.type}` : ''}, key ${t.key}`;
+  return `${markdownLink(t.name, t.url)} — ${escapeMarkdownInline(t.site)}${t.type ? `, ${escapeMarkdownInline(t.type)}` : ''}, key ${escapeMarkdownInline(t.key)}`;
 }
 
 /** Complete provider rendering. */
 export function renderProvider(p: Provider): string {
-  let line = `${p.provider_name} (id ${p.provider_id}, priority ${p.display_priority})`;
-  if (p.logo_url) line += ` — logo ${p.logo_url}`;
+  let line = `${escapeMarkdownInline(p.provider_name)} (id ${p.provider_id}, priority ${p.display_priority})`;
+  if (p.logo_url) line += ` — ${markdownImage('logo', p.logo_url)}`;
   return line;
 }
 
 /** Renders genre/keyword tags as `name (id)` — covers both `name` and `id`. */
 export function renderGenres(genres: Genre[]): string {
-  return genres.map((g) => `${g.name} (${g.id})`).join(', ');
+  return genres.map((g) => `${escapeMarkdownInline(g.name)} (${g.id})`).join(', ');
 }
+
+/** Notices remain raw in structuredContent and become literal blockquotes in content. */
+export const noticeTrailer = {
+  notice: {
+    render: (notice: string) =>
+      escapeMarkdownInline(notice)
+        .split('\n')
+        .map((line) => `> ${line}`)
+        .join('\n'),
+  },
+};
 
 /** Shared enrichment fields for the three list tools (search/discover/trending). */
 export const listEnrichment = {

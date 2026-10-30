@@ -6,6 +6,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownImage, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getTmdbService, type ShowAppend } from '@/services/tmdb/tmdb-service.js';
 import {
   CastMemberSchema,
@@ -211,9 +212,9 @@ export const tmdbGetShow = tool('tmdb_get_show', {
   },
 
   format: (s) => {
-    const lines = [`# ${s.name}`];
-    if (s.original_name) lines.push(`*${s.original_name}*`);
-    if (s.tagline) lines.push(`_${s.tagline}_`);
+    const lines = [`**${escapeMarkdownInline(s.name)}**`];
+    if (s.original_name) lines.push(escapeMarkdownInline(s.original_name));
+    if (s.tagline) lines.push(escapeMarkdownInline(s.tagline));
     const facts = [
       `**id:** ${s.id}`,
       `**rating:** ${s.vote_average.toFixed(1)} (${s.vote_count} votes)`,
@@ -222,37 +223,37 @@ export const tmdbGetShow = tool('tmdb_get_show', {
       `**episodes:** ${s.number_of_episodes}`,
       `**in production:** ${s.in_production ? 'yes' : 'no'}`,
     ];
-    if (s.first_air_date) facts.push(`**first aired:** ${s.first_air_date}`);
-    if (s.last_air_date) facts.push(`**last aired:** ${s.last_air_date}`);
-    if (s.status) facts.push(`**status:** ${s.status}`);
-    if (s.type) facts.push(`**type:** ${s.type}`);
-    if (s.us_content_rating) facts.push(`**rated:** ${s.us_content_rating}`);
+    if (s.first_air_date) facts.push(`**first aired:** ${escapeMarkdownInline(s.first_air_date)}`);
+    if (s.last_air_date) facts.push(`**last aired:** ${escapeMarkdownInline(s.last_air_date)}`);
+    if (s.status) facts.push(`**status:** ${escapeMarkdownInline(s.status)}`);
+    if (s.type) facts.push(`**type:** ${escapeMarkdownInline(s.type)}`);
+    if (s.us_content_rating) facts.push(`**rated:** ${escapeMarkdownInline(s.us_content_rating)}`);
     if (s.episode_run_time?.length)
       facts.push(`**episode runtime:** ${s.episode_run_time.join('/')} min`);
     lines.push(facts.join(' | '));
     if (s.genres.length) lines.push(`**genres:** ${renderGenres(s.genres)}`);
-    if (s.homepage) lines.push(`**homepage:** ${s.homepage}`);
-    if (s.overview) lines.push(`\n${s.overview}`);
-    if (s.poster_url) lines.push(`![poster](${s.poster_url})`);
-    if (s.backdrop_url) lines.push(`![backdrop](${s.backdrop_url})`);
+    if (s.homepage) lines.push(markdownLink('homepage', s.homepage));
+    if (s.overview) lines.push(`\n${escapeMarkdownInline(s.overview)}`);
+    if (s.poster_url) lines.push(markdownImage('poster', s.poster_url));
+    if (s.backdrop_url) lines.push(markdownImage('backdrop', s.backdrop_url));
     if (s.created_by?.length)
       lines.push('\n**Created by:**', ...s.created_by.map((c) => `- ${renderCast(c)}`));
     if (s.networks?.length) {
       lines.push('\n**Networks:**');
       for (const n of s.networks) {
         lines.push(
-          `- ${n.name} (id ${n.id})${n.origin_country ? ` — ${n.origin_country}` : ''}${n.logo_url ? ` logo ${n.logo_url}` : ''}`,
+          `- ${escapeMarkdownInline(n.name)} (id ${n.id})${n.origin_country ? ` — ${escapeMarkdownInline(n.origin_country)}` : ''}${n.logo_url ? ` ${markdownImage('logo', n.logo_url)}` : ''}`,
         );
       }
     }
     if (s.seasons.length) {
       lines.push('\n**Seasons:**');
       for (const se of s.seasons) {
-        const air = se.air_date ? `, ${se.air_date}` : '';
+        const air = se.air_date ? `, ${escapeMarkdownInline(se.air_date)}` : '';
         lines.push(
-          `- S${se.season_number} ${se.name} — ${se.episode_count} episodes${air}${se.poster_url ? ` poster ${se.poster_url}` : ''}`,
+          `- S${se.season_number} ${escapeMarkdownInline(se.name)} — ${se.episode_count} episodes${air}${se.poster_url ? ` ${markdownImage('poster', se.poster_url)}` : ''}`,
         );
-        if (se.overview) lines.push(`  ${se.overview}`);
+        if (se.overview) lines.push(`  ${escapeMarkdownInline(se.overview)}`);
       }
     }
     if (s.last_episode_to_air)
@@ -269,7 +270,7 @@ export const tmdbGetShow = tool('tmdb_get_show', {
     if (s.external_ids)
       lines.push(
         `\n**External ids:** ${Object.entries(s.external_ids)
-          .map(([k, v]) => `${k}=${v}`)
+          .map(([k, v]) => `${escapeMarkdownInline(k)}=${escapeMarkdownInline(v)}`)
           .join(', ')}`,
       );
     return [{ type: 'text', text: lines.join('\n') }];
@@ -281,12 +282,12 @@ function formatEpisode(e: z.infer<typeof EpisodeSummarySchema>): string {
   if (e.season_number !== undefined && e.episode_number !== undefined) {
     parts.push(`S${e.season_number}E${e.episode_number}`);
   }
-  parts.push(e.name);
+  parts.push(escapeMarkdownInline(e.name));
   if (e.id !== undefined) parts.push(`(${e.id})`);
-  if (e.air_date) parts.push(`— ${e.air_date}`);
+  if (e.air_date) parts.push(`— ${escapeMarkdownInline(e.air_date)}`);
   if (e.vote_average !== undefined) parts.push(`★${e.vote_average.toFixed(1)}`);
   let line = parts.join(' ');
-  if (e.overview) line += ` — ${e.overview}`;
-  if (e.still_url) line += ` ${e.still_url}`;
+  if (e.overview) line += ` — ${escapeMarkdownInline(e.overview)}`;
+  if (e.still_url) line += ` ${markdownImage('still', e.still_url)}`;
   return line;
 }

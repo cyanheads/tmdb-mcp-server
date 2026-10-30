@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownImage, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getTmdbService, type MovieAppend } from '@/services/tmdb/tmdb-service.js';
 import {
   CastMemberSchema,
@@ -149,27 +150,27 @@ export const tmdbGetMovie = tool('tmdb_get_movie', {
   },
 
   format: (m) => {
-    const lines = [`# ${m.title}`];
-    if (m.original_title) lines.push(`*${m.original_title}*`);
-    if (m.tagline) lines.push(`_${m.tagline}_`);
+    const lines = [`**${escapeMarkdownInline(m.title)}**`];
+    if (m.original_title) lines.push(escapeMarkdownInline(m.original_title));
+    if (m.tagline) lines.push(escapeMarkdownInline(m.tagline));
     const facts = [
       `**id:** ${m.id}`,
       `**rating:** ${m.vote_average.toFixed(1)} (${m.vote_count} votes)`,
       `**popularity:** ${m.popularity.toFixed(1)}`,
     ];
-    if (m.release_date) facts.push(`**released:** ${m.release_date}`);
-    if (m.status) facts.push(`**status:** ${m.status}`);
+    if (m.release_date) facts.push(`**released:** ${escapeMarkdownInline(m.release_date)}`);
+    if (m.status) facts.push(`**status:** ${escapeMarkdownInline(m.status)}`);
     if (m.runtime_minutes) facts.push(`**runtime:** ${m.runtime_minutes} min`);
-    if (m.us_certification) facts.push(`**rated:** ${m.us_certification}`);
+    if (m.us_certification) facts.push(`**rated:** ${escapeMarkdownInline(m.us_certification)}`);
     lines.push(facts.join(' | '));
     if (m.genres.length) lines.push(`**genres:** ${renderGenres(m.genres)}`);
     if (m.budget) lines.push(`**budget:** $${m.budget.toLocaleString()}`);
     if (m.revenue) lines.push(`**revenue:** $${m.revenue.toLocaleString()}`);
-    if (m.imdb_id) lines.push(`**imdb:** ${m.imdb_id}`);
-    if (m.homepage) lines.push(`**homepage:** ${m.homepage}`);
-    if (m.overview) lines.push(`\n${m.overview}`);
-    if (m.poster_url) lines.push(`![poster](${m.poster_url})`);
-    if (m.backdrop_url) lines.push(`![backdrop](${m.backdrop_url})`);
+    if (m.imdb_id) lines.push(`**imdb:** ${escapeMarkdownInline(m.imdb_id)}`);
+    if (m.homepage) lines.push(markdownLink('homepage', m.homepage));
+    if (m.overview) lines.push(`\n${escapeMarkdownInline(m.overview)}`);
+    if (m.poster_url) lines.push(markdownImage('poster', m.poster_url));
+    if (m.backdrop_url) lines.push(markdownImage('backdrop', m.backdrop_url));
     if (m.cast?.length) lines.push('\n**Cast:**', ...m.cast.map((c) => `- ${renderCast(c)}`));
     if (m.crew_key?.length)
       lines.push('\n**Key crew:**', ...m.crew_key.map((c) => `- ${renderCrew(c)}`));
@@ -181,7 +182,7 @@ export const tmdbGetMovie = tool('tmdb_get_movie', {
     if (m.external_ids) {
       lines.push(
         `\n**External ids:** ${Object.entries(m.external_ids)
-          .map(([k, v]) => `${k}=${v}`)
+          .map(([k, v]) => `${escapeMarkdownInline(k)}=${escapeMarkdownInline(v)}`)
           .join(', ')}`,
       );
     }

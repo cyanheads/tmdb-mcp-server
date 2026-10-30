@@ -11,6 +11,7 @@ import { getServerConfig } from '@/config/server-config.js';
 import { type DiscoverParams, getTmdbService } from '@/services/tmdb/tmdb-service.js';
 import {
   listEnrichment,
+  noticeTrailer,
   renderSummaryItem,
   SummaryItemSchema,
   TMDB_ATTRIBUTION,
@@ -159,6 +160,7 @@ export const tmdbDiscoverTitles = tool('tmdb_discover_titles', {
     results: z.array(SummaryItemSchema).describe('Matching summary cards (up to 20 per page).'),
   }),
   enrichment: listEnrichment,
+  enrichmentTrailer: noticeTrailer,
   errors: [
     {
       reason: 'region_required',

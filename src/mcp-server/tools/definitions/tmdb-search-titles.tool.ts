@@ -8,6 +8,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getTmdbService } from '@/services/tmdb/tmdb-service.js';
 import {
   listEnrichment,
+  noticeTrailer,
   renderSummaryItem,
   SummaryItemSchema,
   TMDB_ATTRIBUTION,
@@ -60,6 +61,7 @@ export const tmdbSearchTitles = tool('tmdb_search_titles', {
     results: z.array(SummaryItemSchema).describe('Ranked results (up to 20 per page).'),
   }),
   enrichment: listEnrichment,
+  enrichmentTrailer: noticeTrailer,
 
   async handler(input, ctx) {
     const result = await getTmdbService().search(
