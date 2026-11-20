@@ -9,6 +9,8 @@ describe('dependency agent documentation pruning', () => {
       filterAgentDocEntries([
         'node_modules/@modelcontextprotocol/server/dist/ext/skills/index.js',
         'node_modules/outer/node_modules/@modelcontextprotocol/server/dist/ext/skills/index.js',
+        'node_modules/@owner/skills/index.js',
+        'node_modules/guide/dist/AGENTS.md',
         'skills/tmdb-guide/SKILL.md',
       ]),
     ).toEqual([]);
@@ -20,6 +22,9 @@ describe('dependency agent documentation pruning', () => {
       'node_modules/guide/skills/lookup/SKILL.md',
       'node_modules/outer/node_modules/@owner/guide/.agents/skills/a/SKILL.md',
       'node_modules/guide/SKILL.md',
+      'node_modules/guide/AGENTS.md',
+      'node_modules/outer/node_modules/@owner/guide/CLAUDE.md',
+      'node_modules/guide/dist/extra/SKILL.md',
     ];
     expect(filterAgentDocEntries(entries)).toEqual(entries);
   });
