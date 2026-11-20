@@ -1,6 +1,6 @@
 # tmdb-mcp-server - Directory Structure
 
-Generated on: 2026-10-30 09:15:54
+Generated on: 2026-11-20 22:12:54
 
 ```text
 tmdb-mcp-server/
@@ -26,6 +26,7 @@ tmdb-mcp-server/
 ├── changelog/
 │   ├── 0.1.x/
 │   ├── 0.2.x/
+│   ├── 0.3.x/
 │   └── template.md
 ├── docs/
 │   └── design.md
@@ -174,6 +175,7 @@ tmdb-mcp-server/
 │   ├── scripts/
 │   │   └── clean-mcpb.test.ts
 │   ├── services/
+│   │   ├── tmdb-collection-wire.test.ts
 │   │   └── tmdb-service.test.ts
 │   ├── tools/
 │   │   ├── tmdb-discover-titles.tool.test.ts
@@ -184,7 +186,8 @@ tmdb-mcp-server/
 │   │   ├── tmdb-get-trending.tool.test.ts
 │   │   ├── tmdb-get-watch-providers.tool.test.ts
 │   │   ├── tmdb-rendering.test.ts
-│   │   └── tmdb-search-titles.tool.test.ts
+│   │   ├── tmdb-search-titles.tool.test.ts
+│   │   └── tmdb-search-wire.test.ts
 │   ├── index.http-session.test.ts
 │   └── index.session-mode.test.ts
 ├── .dockerignore

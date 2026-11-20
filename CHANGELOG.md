@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.0](changelog/0.3.x/0.3.0.md) — 2026-11-20 · ⚠️ Breaking
+
+Page title credits and trace episode and franchise details.
+
 ## [0.2.0](changelog/0.2.x/0.2.0.md) — 2026-10-30
 
 Publish a TMDB research guide over MCP and preserve literal text and media links in formatted results.
