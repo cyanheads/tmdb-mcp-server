@@ -30,9 +30,9 @@ Movie and TV metadata powered by The Movie Database (TMDB). Search titles and pe
 | Tool | Description |
 |:---|:---|
 | `tmdb_search_titles` | Search movies, TV, and people by name. The required first step — resolves a name to the integer id the detail tools consume. |
-| `tmdb_get_movie` | Full movie detail in one call — synopsis, runtime, genres, US certification, budget/revenue, cast, crew, trailers, recommendations, keywords, external ids. |
+| `tmdb_get_movie` | Movie detail with paged credits, trailers, recommendations, and franchise membership. Request `collection` for the films in release order. |
 | `tmdb_get_show` | Full TV show detail — overview, air dates, status, season/episode counts, creators, networks, season summaries, cast, trailers, content rating. |
-| `tmdb_get_season` | Episode list for one season — names, air dates, runtimes, vote averages, stills, per-episode guest stars, plus the season's regular cast. |
+| `tmdb_get_season` | Season cast, episode metadata, directing and writing credits, and optional guest appearances. |
 | `tmdb_get_person` | Person detail and full filmography — biography, vital dates, the `combined_credits` cast/crew lists, and cross-platform external ids. |
 | `tmdb_discover_titles` | Filtered, sorted discovery across movies or TV — the power-query: genre, date/vote ranges, vote-count floor, cast/crew/network, watch providers, runtime, sort. |
 | `tmdb_get_trending` | Trending movies, TV, or people for the day or week. |
@@ -42,8 +42,8 @@ Movie and TV metadata powered by The Movie Database (TMDB). Search titles and pe
 
 | Resource | Description |
 |:---|:---|
-| `tmdb://movie/{movie_id}` | Movie detail by id, as injectable context — the same enriched record as `tmdb_get_movie`. |
-| `tmdb://tv/{series_id}` | Show detail by id — the same enriched record as `tmdb_get_show`. |
+| `tmdb://movie/{movie_id}` | Movie detail, collection membership, and the first page of credits. |
+| `tmdb://tv/{series_id}` | Show detail and the first page of series-wide credits. |
 | `tmdb://person/{person_id}` | Person detail with the first 50 cast and 50 crew credits and full totals; use `tmdb_get_person` for further pages. |
 | `skill://tmdb-guide/SKILL.md` | Agent guide for regional watchlists, directing credits, filmography paging, and season traversal. |
 
@@ -60,14 +60,15 @@ Movie and TV metadata powered by The Movie Database (TMDB). Search titles and pe
 ### `tmdb_get_movie` <sub>tool</sub>
 
 - Returns credits, videos, recommendations, similar, keywords, external ids, and release dates in one call; trim the `append` array (e.g. `["credits"]`) to shrink the payload
-- Includes US certification, top-billed cast, key crew, and YouTube trailers with watch URLs
+- With credits requested, each `credits_page` returns up to 15 cast and 50 crew entries. Follow `next_credits_page` while either list continues.
+- Collection membership comes from movie detail. Include `"collection"` in `append` to fetch the franchise’s films in release-date order, with undated films last.
 - No streaming availability; use `tmdb_get_watch_providers`
 
 ---
 
 ### `tmdb_get_show` <sub>tool</sub>
 
-- Same `append` options as `tmdb_get_movie`, with `content_ratings` (US TV rating) in place of `release_dates`
+- `credits` includes cast roles and crew jobs across seasons, with episode counts. Follow `next_credits_page` for later entries. `content_ratings` supplies the US TV rating.
 - Adds season summaries, creators, networks, and the last/next episode to air
 - Pass a `season_number` from `seasons[]` to `tmdb_get_season` for episodes
 
@@ -75,7 +76,8 @@ Movie and TV metadata powered by The Movie Database (TMDB). Search titles and pe
 
 ### `tmdb_get_season` <sub>tool</sub>
 
-- Per-episode names, air dates, runtimes, vote averages, still URLs, and guest stars
+- Episode IDs, names, air dates, runtimes, vote counts and averages, still URLs, episode types, and directing and writing credits when available
+- Set `include_guest_stars: true` to include guest appearances
 - Also returns the season's regular cast
 - `series_id` is echoed from the input; season 0 is "Specials"
 
@@ -85,7 +87,8 @@ Movie and TV metadata powered by The Movie Database (TMDB). Search titles and pe
 
 - Biography, vital dates, place of birth, known-for department, aliases, gender, and external ids (IMDb, Wikidata, social handles)
 - `combined_credits` split into `cast_credits` and `crew_credits`, newest first; `credits_page` (default 1) returns up to 50 of each, with full totals on every page
-- Follow `next_credits_page` for more; pages past the end return empty lists
+- TV credits use the person’s first credited episode date when available, with the series premiere as fallback. Episode counts appear when TMDB supplies them.
+- Follow `next_credits_page` for more. Pages past the end return empty lists.
 
 ---
 
@@ -109,13 +112,13 @@ Movie and TV metadata powered by The Movie Database (TMDB). Search titles and pe
 
 - Returns flatrate, rent, buy, ads, and free provider lists with logo URLs, plus the TMDB JustWatch `link`
 - `watch_region` (ISO 3166-1 alpha-2) is required; the response always states the region
-- An empty result means not streamable in that region; provider ids feed `with_watch_providers` in `tmdb_discover_titles`
+- Check the resolved title and year against the intended movie or show. An empty list means TMDB has no listings for that region. `available_regions` lists region codes with provider data.
 
 ---
 
 ### `tmdb://movie/{movie_id}` <sub>resource</sub>
 
-- Same record as `tmdb_get_movie` — `application/json`
+- JSON movie detail includes collection membership and first-page credit totals. Use `tmdb_get_movie` for later pages or collection parts.
 - `movie_id` comes from `tmdb_search_titles` or `tmdb_discover_titles`
 - Typed `movie_not_found` error when TMDB returns 404 for the id
 
@@ -123,7 +126,7 @@ Movie and TV metadata powered by The Movie Database (TMDB). Search titles and pe
 
 ### `tmdb://tv/{series_id}` <sub>resource</sub>
 
-- Same record as `tmdb_get_show` — `application/json`
+- JSON show detail includes first-page series-wide credits and totals. Use `tmdb_get_show` for subsequent pages.
 - `series_id` comes from `tmdb_search_titles` or `tmdb_discover_titles`
 - Typed `show_not_found` error when TMDB returns 404 for the id
 
@@ -211,7 +214,7 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 
 ### Local development
 
-Requires [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
+Requires [Bun v1.4.4](https://bun.sh/) or higher (or Node.js v24+).
 
 ```sh
 git clone https://github.com/cyanheads/tmdb-mcp-server.git

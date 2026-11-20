@@ -45,14 +45,23 @@ export interface RawCastMember {
   name?: string;
   order?: number;
   profile_path?: string | null;
+  roles?: CastMember['roles'];
+  total_episode_count?: number;
 }
 
 export interface RawCrewMember {
   department?: string;
   id: number;
   job?: string;
+  jobs?: CrewMember['jobs'];
   name?: string;
   profile_path?: string | null;
+  total_episode_count?: number;
+}
+
+export interface RawTitleCredits {
+  cast?: RawCastMember[];
+  crew?: RawCrewMember[];
 }
 
 export interface RawVideo {
@@ -101,8 +110,9 @@ export interface RawExternalIds {
 
 export interface RawMovie {
   backdrop_path?: string | null;
+  belongs_to_collection?: RawCollection | null;
   budget?: number;
-  credits?: { cast?: RawCastMember[]; crew?: RawCrewMember[] };
+  credits?: RawTitleCredits;
   external_ids?: RawExternalIds;
   genres?: RawGenre[];
   homepage?: string | null;
@@ -130,6 +140,12 @@ export interface RawMovie {
   videos?: { results?: RawVideo[] };
   vote_average?: number;
   vote_count?: number;
+}
+
+export interface RawCollection {
+  id: number;
+  name?: string;
+  poster_path?: string | null;
 }
 
 /* ─────────────────────────── Raw TV ────────────────────────────────────── */
@@ -162,12 +178,12 @@ export interface RawNetwork {
 }
 
 export interface RawShow {
+  aggregate_credits?: RawTitleCredits;
   backdrop_path?: string | null;
   content_ratings?: {
     results?: Array<{ iso_3166_1?: string; rating?: string }>;
   };
   created_by?: Array<{ id: number; name?: string; profile_path?: string | null }>;
-  credits?: { cast?: RawCastMember[]; crew?: RawCrewMember[] };
   episode_run_time?: number[];
   external_ids?: RawExternalIds;
   first_air_date?: string;
@@ -202,13 +218,17 @@ export interface RawShow {
 
 export interface RawEpisode {
   air_date?: string;
+  crew?: RawCrewMember[];
   episode_number: number;
+  episode_type?: string;
   guest_stars?: RawCastMember[];
+  id?: number;
   name?: string;
   overview?: string;
   runtime?: number | null;
   still_path?: string | null;
   vote_average?: number;
+  vote_count?: number;
 }
 
 export interface RawSeason {
@@ -229,6 +249,8 @@ export interface RawSeason {
 export interface RawCombinedCredit extends RawSummaryItem {
   character?: string;
   department?: string;
+  episode_count?: number;
+  first_credit_air_date?: string | null;
   job?: string;
 }
 
@@ -282,6 +304,14 @@ export interface RawWatchProviders {
   results?: Record<string, RawWatchProviderRegion>;
 }
 
+export interface RawWatchProviderTitle {
+  first_air_date?: string;
+  name?: string;
+  release_date?: string;
+  title?: string;
+  'watch/providers'?: RawWatchProviders;
+}
+
 /* ═══════════════════════════ Domain (normalized) ════════════════════════ */
 
 /** A normalized summary card — search/discover/trending/recommendations. */
@@ -324,16 +354,34 @@ export interface CastMember {
   name: string;
   order?: number;
   profile_url?: string;
+  roles?: { character: string; episode_count: number }[];
+  total_episode_count?: number;
 }
 
 export interface CrewMember {
   department?: string;
   id: number;
   job: string;
+  jobs?: { job: string; episode_count: number }[];
   name: string;
   profile_url?: string;
+  total_episode_count?: number;
 }
 
+export interface TitleCredits {
+  cast: CastMember[];
+  cast_total: number;
+  crew: CrewMember[];
+  crew_key?: CrewMember[];
+  crew_total: number;
+}
+
+export interface MovieCollection {
+  id: number;
+  name: string;
+  parts?: SummaryItem[];
+  poster_url?: string;
+}
 export interface Trailer {
   key: string;
   name: string;
@@ -342,11 +390,10 @@ export interface Trailer {
   url: string;
 }
 
-export interface MovieDetail {
+export interface MovieDetail extends Partial<TitleCredits> {
   backdrop_url?: string;
   budget?: number;
-  cast?: CastMember[];
-  crew_key?: CrewMember[];
+  collection?: MovieCollection;
   external_ids?: Record<string, string>;
   genres: Genre[];
   homepage?: string;
@@ -398,11 +445,9 @@ export interface Network {
   origin_country?: string;
 }
 
-export interface ShowDetail {
+export interface ShowDetail extends Partial<TitleCredits> {
   backdrop_url?: string;
-  cast?: CastMember[];
   created_by?: CastMember[];
-  crew_key?: CrewMember[];
   episode_run_time?: number[];
   external_ids?: Record<string, string>;
   first_air_date?: string;
@@ -436,13 +481,17 @@ export interface ShowDetail {
 
 export interface Episode {
   air_date?: string;
+  crew?: Pick<CrewMember, 'id' | 'name' | 'job'>[];
   episode_number: number;
+  episode_type?: string;
   guest_stars?: CastMember[];
+  id?: number;
   name: string;
   overview?: string;
   runtime_minutes?: number;
   still_url?: string;
   vote_average?: number;
+  vote_count?: number;
 }
 
 export interface SeasonDetail {
@@ -459,6 +508,7 @@ export interface SeasonDetail {
 
 export interface PersonCastCredit {
   character?: string;
+  episode_count?: number;
   id: number;
   media_type: MediaType;
   poster_url?: string;
@@ -469,6 +519,7 @@ export interface PersonCastCredit {
 
 export interface PersonCrewCredit {
   department?: string;
+  episode_count?: number;
   id: number;
   job: string;
   media_type: MediaType;
@@ -511,6 +562,7 @@ export interface Provider {
 
 export interface WatchProviders {
   ads: Provider[];
+  available_regions: string[];
   buy: Provider[];
   flatrate: Provider[];
   free: Provider[];
@@ -518,5 +570,7 @@ export interface WatchProviders {
   link?: string;
   media_type: DiscoverMediaType;
   region: string;
+  release_year?: number;
   rent: Provider[];
+  title?: string;
 }

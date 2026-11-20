@@ -43,6 +43,14 @@ describe('tmdb resources', () => {
         vote_average: 8.4,
         vote_count: 1,
         popularity: 1,
+        belongs_to_collection: { id: 87359, name: 'Collection' },
+        credits: {
+          cast: Array.from({ length: 16 }, (_, index) => ({
+            id: index + 1,
+            name: `Cast ${index}`,
+          })),
+          crew: [{ id: 200, name: 'Editor', job: 'Editor' }],
+        },
       },
     });
     const ctx = createMockContext({
@@ -52,6 +60,15 @@ describe('tmdb resources', () => {
     const params = tmdbMovieResource.params!.parse({ movie_id: '550' });
     const movie = await tmdbMovieResource.handler(params, ctx);
     expect(movie).toMatchObject({ id: 550, title: 'Fight Club' });
+    expect(movie).toMatchObject({
+      cast_total: 16,
+      crew_total: 1,
+      cast: Array.from({ length: 15 }, (_, index) => ({ id: index + 1, name: `Cast ${index}` })),
+      crew: [{ id: 200, name: 'Editor', job: 'Editor' }],
+    });
+    expect(movie).toHaveProperty('collection', { id: 87359, name: 'Collection' });
+    expect(movie).not.toHaveProperty('credits_page');
+    expect(movie).not.toHaveProperty('next_credits_page');
   });
 
   it('tmdb://tv/{id} resolves a show by id', async () => {
@@ -66,6 +83,17 @@ describe('tmdb resources', () => {
         number_of_seasons: 5,
         number_of_episodes: 62,
         seasons: [],
+        aggregate_credits: {
+          cast: [
+            {
+              id: 1,
+              name: 'Series Lead',
+              roles: [{ character: 'Lead', episode_count: 62 }],
+              total_episode_count: 62,
+            },
+          ],
+          crew: [],
+        },
       },
     });
     const ctx = createMockContext({
@@ -75,6 +103,22 @@ describe('tmdb resources', () => {
     const params = tmdbTvResource.params!.parse({ series_id: '1396' });
     const show = await tmdbTvResource.handler(params, ctx);
     expect(show).toMatchObject({ id: 1396, name: 'Breaking Bad' });
+    expect(show).toMatchObject({
+      cast_total: 1,
+      crew_total: 0,
+      cast: [
+        {
+          id: 1,
+          name: 'Series Lead',
+          character: 'Lead',
+          total_episode_count: 62,
+          roles: [{ character: 'Lead', episode_count: 62 }],
+        },
+      ],
+      crew: [],
+    });
+    expect(show).not.toHaveProperty('credits_page');
+    expect(show).not.toHaveProperty('next_credits_page');
   });
 
   it('tmdb://person/{id} resolves a person by id', async () => {
@@ -84,11 +128,21 @@ describe('tmdb resources', () => {
         name: 'Brad Pitt',
         popularity: 1,
         combined_credits: {
-          cast: Array.from({ length: 51 }, (_, id) => ({
-            id,
-            title: `Credit ${id}`,
-            release_date: '2020-01-01',
-          })),
+          cast: [
+            ...Array.from({ length: 50 }, (_, id) => ({
+              id,
+              title: `Credit ${id}`,
+              release_date: '2020-01-01',
+            })),
+            {
+              id: 99,
+              media_type: 'tv',
+              name: 'A long-running series',
+              first_air_date: '1968-01-01',
+              first_credit_air_date: '2021-01-01',
+              episode_count: 1,
+            },
+          ],
           crew: [],
         },
       },
@@ -101,7 +155,10 @@ describe('tmdb resources', () => {
     const person = await tmdbPersonResource.handler(params, ctx);
     expect(person).toMatchObject({ id: 287, name: 'Brad Pitt' });
     expect(person).toMatchObject({
-      cast_credits: Array.from({ length: 50 }, (_, id) => expect.objectContaining({ id })),
+      cast_credits: [
+        expect.objectContaining({ id: 99, release_year: 2021, episode_count: 1 }),
+        ...Array.from({ length: 49 }, (_, id) => expect.objectContaining({ id })),
+      ],
       cast_credits_total: 51,
     });
     expect(person).not.toHaveProperty('credits_page');

@@ -7,7 +7,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { markdownLink } from '@cyanheads/mcp-ts-core/utils';
+import { escapeMarkdownInline, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getTmdbService } from '@/services/tmdb/tmdb-service.js';
 import {
   detailEnrichment,
@@ -20,7 +20,7 @@ import {
 export const tmdbGetWatchProviders = tool('tmdb_get_watch_providers', {
   title: 'tmdb-mcp-server: get watch providers',
   description:
-    'Find where a movie or TV title streams in one region. Returns flatrate (subscription), rent, buy, ads (ad-supported free), and free provider lists with logo URLs, plus the TMDB JustWatch-backed link — the supported path to actual deep links. A region code is REQUIRED: availability is region-specific (JustWatch) and there is no global answer. An empty result for a region is a valid "not available to stream here" answer, not an error.',
+    'Find where a movie or TV title streams in one region. Returns the resolved title and year, provider lists (subscription, rent, buy, ad-supported, and free), and the TMDB JustWatch-backed link for the requested region. A region code is required. Empty provider lists mean TMDB has no provider entries for the requested region. Use the reported region codes to choose another region to query separately.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   input: z.object({
     media_type: z.enum(['movie', 'tv']).describe('Whether the id is a movie or a TV show.'),
@@ -41,7 +41,18 @@ export const tmdbGetWatchProviders = tool('tmdb_get_watch_providers', {
   output: z.object({
     id: z.number().describe('The title id queried.'),
     media_type: z.enum(['movie', 'tv']).describe('Movie or TV.'),
+    title: z
+      .string()
+      .optional()
+      .describe('Resolved title in the configured language, when supplied.'),
+    release_year: z
+      .number()
+      .optional()
+      .describe('Movie release year or TV premiere year, when known.'),
     region: z.string().describe('The ISO 3166-1 region the availability applies to.'),
+    available_regions: z
+      .array(z.string())
+      .describe('Sorted region codes with TMDB provider data. Each region is queried separately.'),
     link: z
       .string()
       .optional()
@@ -87,7 +98,7 @@ export const tmdbGetWatchProviders = tool('tmdb_get_watch_providers', {
     ctx.enrich({ attribution: TMDB_ATTRIBUTION });
     if (total === 0) {
       ctx.enrich.notice(
-        `No providers found for region ${input.watch_region}. This title may not be available to stream/rent/buy there. Availability is region-specific (JustWatch) — query another region separately.`,
+        `No providers found for region ${input.watch_region}. This title may not be available to stream/rent/buy there. Availability is region-specific (JustWatch).${result.available_regions.some((region) => region !== input.watch_region) ? ' To check availability elsewhere, query a listed region separately.' : ''}`,
       );
     } else {
       ctx.enrich.notice(
@@ -100,7 +111,17 @@ export const tmdbGetWatchProviders = tool('tmdb_get_watch_providers', {
 
   format: (r) => {
     const lines = [`# Watch providers — ${r.media_type} ${r.id} (region ${r.region})`];
+    if (r.title) {
+      lines.push(
+        `${escapeMarkdownInline(r.title)}${r.release_year !== undefined ? ` (${r.release_year})` : ''}`,
+      );
+    } else if (r.release_year !== undefined) {
+      lines.push(`**Release year:** ${r.release_year}`);
+    }
     if (r.link) lines.push(markdownLink('Watch options', r.link));
+    lines.push(
+      `**Regions with provider data:** ${r.available_regions.length ? r.available_regions.map(escapeMarkdownInline).join(', ') : 'None'}`,
+    );
     const section = (label: string, providers: typeof r.flatrate) => {
       if (!providers.length) return;
       lines.push(`\n**${label}:**`);

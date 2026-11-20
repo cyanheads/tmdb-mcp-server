@@ -4,7 +4,7 @@ description: Resolve movie, TV, and person identities with tmdb_* tools, build r
 license: Apache-2.0
 metadata:
   author: "cyanheads"
-  version: "1.0"
+  version: "1.1"
 ---
 
 ## Scope
@@ -21,7 +21,7 @@ For discovery genre IDs, inspect `genres[].id` from tmdb_get_movie or tmdb_get_s
 
 - Resolve ambiguous titles or people using the returned year, entity kind, overview, and known-for titles before fetching detail. Search ranking alone does not establish identity; the search year filter only applies in movie or TV mode.
 - Before claiming a title is included with a subscription, check its regional `flatrate` list. Rental, purchase, ad-supported, and free listings are separate categories. Provider-filtered discovery alone does not prove subscription inclusion. Report an empty listing as no TMDB provider data for that region, rather than proof that no legal viewing option exists.
-- Before claiming a person directed a title, inspect the person's crew credit `job`. Discovery's crew filter matches crew membership, not a particular job; movie detail's key crew is curated and cast is capped, so absence there is not a complete filmography check.
+- For a directing credit, check the person’s crew `job`, the movie’s paged `crew`, or the show’s grouped crew `jobs`. `crew_key` is a curated preview. To identify who directed a particular episode, inspect that episode’s `crew` in tmdb_get_season. Follow `next_credits_page` until it disappears before ruling out a credit. Cast and crew can finish on different pages.
 - Read notices before presenting filtered discovery as satisfying every criterion: TV ignores cast/crew filters and revenue sorting; movies ignore network filters. Multiple people, networks, or providers match any listed ID, while required genres match all listed IDs.
 - Follow tmdb_get_person `next_credits_page` until it is absent before calling the filmography complete. Cast and crew lists page independently; an empty cast page does not establish that crew credits are exhausted. The person resource returns only the first page; continue through the tool.
 
@@ -31,10 +31,12 @@ Resolve the entity with tmdb_search_titles, inspect the matching detail with tmd
 
 ## Workflows
 
-**A regional watchlist:** Resolve a known title and call tmdb_get_watch_providers in the user's country to obtain provider IDs. Use those IDs with tmdb_discover_titles to browse candidates, then check each shortlisted title with tmdb_get_watch_providers in the same country and verify the requested category. Use the returned TMDB/JustWatch link for viewing destinations rather than constructing provider deep links.
+**A regional watchlist:** Resolve a known title and call tmdb_get_watch_providers in the user's country to obtain provider IDs. Use those IDs with tmdb_discover_titles to browse candidates, then check each shortlisted title with tmdb_get_watch_providers in the same country and verify the resolved title, year, and requested category. Use the returned TMDB/JustWatch link for viewing destinations rather than constructing provider deep links.
 
 **A director's work:** Resolve the person, fetch tmdb_get_person, and follow its continuation while preserving the chosen language. Select crew credits whose job is Director, retain the title's media type, and fetch the matching movie/show detail for the user's additional criteria. For TV participation, use the person's credits rather than discovery's movie-only crew filter.
 
-**A show's episodes:** Resolve the TV series and fetch tmdb_get_show. Select actual returned season numbers for tmdb_get_season; season zero is Specials and must not be inferred from the regular-season count. The season tool returns episodes and guest stars, while show-level detail supplies last/next episode summaries.
+**A show's episodes:** Resolve the TV series and select a season from `seasons[]`, including season zero for Specials. Request `include_guest_stars: true` on tmdb_get_season when tracing guest appearances. For a person’s filmography, TV `release_year` uses their first credited episode where available and otherwise falls back to the series premiere.
+
+**Franchise viewing order:** Request `append: ["collection"]` on tmdb_get_movie to read the franchise in release order. The movie resource supplies membership only.
 
 **Ranked browsing:** Use discovery for explicit criteria and trending for day/week popularity. Set an explicit latest date when excluding future releases and combine rating order with a vote-count floor chosen for the task. Page search/discovery/trending results within the tools' supported range; the first page is not the full result set. Response language controls presentation; original-language filtering controls the works selected.

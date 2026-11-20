@@ -143,6 +143,71 @@ describe('TmdbService.search (headline: name → ids + image/genre resolution)',
 });
 
 describe('TmdbService.getMovie (append normalization + US cert)', () => {
+  it('keeps non-credit detail independent of credit appends', async () => {
+    const svc = await initService({
+      '/movie/550': { id: 550, title: 'Fight Club', credits: { cast: [{ id: 1 }] } },
+    });
+    const movie = await svc.getMovie(550, [], ctx);
+    expect(movie.title).toBe('Fight Club');
+    expect(movie).not.toHaveProperty('cast');
+  });
+
+  it('pages full movie cast and crew independently and preserves key crew', async () => {
+    const cast = Array.from({ length: 16 }, (_, id) => ({ id, name: 'Cast' }));
+    const crew = Array.from({ length: 50 }, (_, id) => ({ id, name: 'Crew', job: 'Editor' }));
+    crew.push({ id: 50, name: 'Director', job: 'Director' });
+    const svc = await initService({ '/movie/550': { id: 550, credits: { cast, crew } } });
+    const second = await svc.getMovie(550, ['credits'], ctx, undefined, 2);
+    expect(second).toMatchObject({
+      cast: [{ id: 15 }],
+      cast_total: 16,
+      crew: [{ id: 50 }],
+      crew_total: 51,
+      crew_key: [{ id: 50, job: 'Director' }],
+    });
+    await expect(svc.getMovie(550, ['credits'], ctx, undefined, 3)).resolves.toMatchObject({
+      cast: [],
+      cast_total: 16,
+      crew: [],
+      crew_total: 51,
+    });
+  });
+
+  it('includes membership by default and requests ordered collection parts only on demand', async () => {
+    const svc = await initService({
+      '/movie/550?language=fr-FR': {
+        id: 550,
+        belongs_to_collection: { id: 21, name: 'Saga', poster_path: '/saga.jpg' },
+      },
+      '/collection/21?language=fr-FR': {
+        parts: [
+          { id: 3, title: 'Later', release_date: '2025-01-01' },
+          { id: 4, title: 'Undated', release_date: '' },
+          { id: 1, title: 'Earlier', release_date: '2023-01-01' },
+          { id: 2, title: 'Earlier too', release_date: '2023-01-01' },
+        ],
+      },
+    });
+    const plain = await svc.getMovie(550, [], ctx, 'fr-FR');
+    expect(plain.collection).toEqual({
+      id: 21,
+      name: 'Saga',
+      poster_url: 'https://image.tmdb.org/t/p/w500/saga.jpg',
+    });
+    const expanded = await svc.getMovie(550, ['collection'], ctx, 'fr-FR');
+    expect(expanded.collection?.parts?.map(({ id, media_type }) => [id, media_type])).toEqual([
+      [1, 'movie'],
+      [2, 'movie'],
+      [3, 'movie'],
+      [4, 'movie'],
+    ]);
+    throwForPath('/collection/21', JsonRpcErrorCode.NotFound);
+    await expect(svc.getMovie(550, ['collection'], ctx, 'fr-FR')).rejects.toMatchObject({
+      code: JsonRpcErrorCode.NotFound,
+      data: { reason: 'collection_not_found' },
+    });
+  });
+
   it('extracts the type-3 theatrical US certification and key crew', async () => {
     const svc = await initService({
       '/movie/550': {
@@ -201,6 +266,67 @@ describe('TmdbService.getMovie (append normalization + US cert)', () => {
   });
 });
 
+it('appends aggregate series credits and preserves each person’s roles and jobs', async () => {
+  const svc = await initService({
+    '/tv/12?language=fr-FR&append_to_response=aggregate_credits%2Cvideos': {
+      id: 12,
+      aggregate_credits: {
+        cast: [
+          {
+            id: 8,
+            name: 'Actor',
+            total_episode_count: 3,
+            roles: [
+              { character: 'One', episode_count: 2 },
+              { character: 'Two', episode_count: 1 },
+            ],
+          },
+        ],
+        crew: [
+          {
+            id: 9,
+            name: 'Crew',
+            department: 'Directing',
+            total_episode_count: 5,
+            jobs: [
+              { job: 'Director', episode_count: 2 },
+              { job: 'Assistant Director', episode_count: 3 },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  const show = await svc.getShow(12, ['credits', 'videos'], ctx, 'fr-FR');
+  expect(show).toMatchObject({
+    cast: [
+      {
+        id: 8,
+        character: 'One',
+        total_episode_count: 3,
+        roles: [
+          { character: 'One', episode_count: 2 },
+          { character: 'Two', episode_count: 1 },
+        ],
+      },
+    ],
+    cast_total: 1,
+    crew: [
+      {
+        id: 9,
+        job: 'Director',
+        total_episode_count: 5,
+        jobs: [
+          { job: 'Director', episode_count: 2 },
+          { job: 'Assistant Director', episode_count: 3 },
+        ],
+      },
+    ],
+    crew_total: 1,
+    crew_key: [{ id: 9, job: 'Director' }],
+  });
+});
+
 describe('TmdbService not-found recovery hints (one per detail kind)', () => {
   /**
    * Every detail/resource error contract declares a `recovery` string; the service
@@ -242,7 +368,7 @@ describe('TmdbService not-found recovery hints (one per detail kind)', () => {
 
   it('attaches a title recovery hint on a watch-providers 404', async () => {
     const svc = await initService();
-    throwForPath('/movie/99999999/watch/providers', JsonRpcErrorCode.NotFound);
+    throwForPath('/movie/99999999', JsonRpcErrorCode.NotFound);
     await expect(svc.getWatchProviders('movie', 99999999, 'US', ctx)).rejects.toMatchObject({
       data: {
         reason: 'title_not_found',
@@ -265,6 +391,14 @@ describe('TmdbService.getSeason (series_id echo + guest stars)', () => {
         episodes: [
           {
             episode_number: 1,
+            id: 71949,
+            vote_count: 0,
+            episode_type: 'unknown-from-tmdb',
+            crew: [
+              { id: 1, name: 'Director', job: 'Director' },
+              { id: 2, name: 'Other', job: 'Editor' },
+              { id: 3, name: 'Writer', job: 'Writer' },
+            ],
             name: 'Pilot',
             runtime: 58,
             vote_average: 8.9,
@@ -278,16 +412,63 @@ describe('TmdbService.getSeason (series_id echo + guest stars)', () => {
       },
     });
 
-    const season = await svc.getSeason(1396, 1, ctx);
+    const season = await svc.getSeason(1396, 1, ctx, undefined, true);
     expect(season.series_id).toBe(1396); // NOT in the API response — echoed
     expect(season.season_number).toBe(1);
     expect(season.episodes[0]?.guest_stars?.[0]?.name).toBe('John Koyama');
     expect(season.regular_cast?.[0]?.name).toBe('Bryan Cranston');
     expect(season.episodes[0]?.still_url).toBe('https://image.tmdb.org/t/p/w300/still.jpg');
+    const defaultSeason = await svc.getSeason(1396, 1, ctx);
+    expect(defaultSeason.episodes[0]).not.toHaveProperty('guest_stars');
+    expect(defaultSeason.regular_cast).toEqual(season.regular_cast);
+    expect(defaultSeason.episodes[0]).toMatchObject({
+      id: 71949,
+      vote_count: 0,
+      episode_type: 'unknown-from-tmdb',
+      crew: [
+        { id: 1, name: 'Director', job: 'Director' },
+        { id: 3, name: 'Writer', job: 'Writer' },
+      ],
+    });
   });
 });
 
 describe('TmdbService.getPerson (recency-ordered, capped credits, gender label)', () => {
+  it('sorts TV cast and crew using the credit year and preserves sparse counts', async () => {
+    const svc = await initService({
+      '/person/1': {
+        id: 1,
+        combined_credits: {
+          cast: [
+            {
+              id: 1,
+              media_type: 'tv',
+              first_air_date: '2001-01-01',
+              first_credit_air_date: '2020-02-03',
+              episode_count: 0,
+            },
+            { id: 2, media_type: 'tv', first_air_date: '2010-01-01', first_credit_air_date: '' },
+          ],
+          crew: [
+            {
+              id: 3,
+              media_type: 'tv',
+              first_air_date: '2008-01-01',
+              first_credit_air_date: '2010-05-23',
+              episode_count: 3,
+            },
+          ],
+        },
+      },
+    });
+    const person = await svc.getPerson(1, ctx);
+    expect(person.cast_credits).toMatchObject([
+      { id: 1, release_year: 2020, episode_count: 0 },
+      { id: 2, release_year: 2010 },
+    ]);
+    expect(person.cast_credits[1]).not.toHaveProperty('episode_count');
+    expect(person.crew_credits).toMatchObject([{ id: 3, release_year: 2010, episode_count: 3 }]);
+  });
   it('keeps upstream tie order and unknown dates last on the default page', async () => {
     const cast = Array.from({ length: 51 }, (_, id) => ({
       id,
@@ -457,29 +638,49 @@ describe('TmdbService.discover (dot-notation translation)', () => {
 });
 
 describe('TmdbService.getWatchProviders (region mapping)', () => {
+  it('returns the resolved title and sorted region codes with only requested providers', async () => {
+    const svc = await initService({
+      '/tv/238?language=en-US&append_to_response=watch%2Fproviders': {
+        id: 238,
+        name: 'Star Cops',
+        first_air_date: '1987-07-06',
+        'watch/providers': { results: { GB: { rent: [{ provider_id: 1 }] }, AU: {} } },
+      },
+    });
+    await expect(svc.getWatchProviders('tv', 238, 'US', ctx)).resolves.toMatchObject({
+      title: 'Star Cops',
+      release_year: 1987,
+      available_regions: ['AU', 'GB'],
+      rent: [],
+    });
+  });
   it('maps the region sub-object to flat provider arrays + link', async () => {
     const svc = await initService({
-      '/movie/550/watch/providers': {
+      '/movie/550': {
         id: 550,
-        results: {
-          US: {
-            link: 'https://www.themoviedb.org/movie/550/watch?locale=US',
-            flatrate: [
-              {
-                provider_id: 8,
-                provider_name: 'Netflix',
-                logo_path: '/nf.jpg',
-                display_priority: 1,
-              },
-            ],
-            rent: [
-              {
-                provider_id: 2,
-                provider_name: 'Apple TV',
-                logo_path: '/atv.jpg',
-                display_priority: 3,
-              },
-            ],
+        title: 'Fight Club',
+        release_date: '1999-10-15',
+        'watch/providers': {
+          results: {
+            US: {
+              link: 'https://www.themoviedb.org/movie/550/watch?locale=US',
+              flatrate: [
+                {
+                  provider_id: 8,
+                  provider_name: 'Netflix',
+                  logo_path: '/nf.jpg',
+                  display_priority: 1,
+                },
+              ],
+              rent: [
+                {
+                  provider_id: 2,
+                  provider_name: 'Apple TV',
+                  logo_path: '/atv.jpg',
+                  display_priority: 3,
+                },
+              ],
+            },
           },
         },
       },
@@ -491,16 +692,23 @@ describe('TmdbService.getWatchProviders (region mapping)', () => {
     expect(wp.flatrate[0]?.logo_url).toBe('https://image.tmdb.org/t/p/w92/nf.jpg');
     expect(wp.rent[0]?.provider_name).toBe('Apple TV');
     expect(wp.buy).toEqual([]);
+    expect(wp).toMatchObject({
+      title: 'Fight Club',
+      release_year: 1999,
+      available_regions: ['US'],
+    });
   });
 
   it('returns empty arrays and no link when the region has no data', async () => {
     const svc = await initService({
-      '/tv/1396/watch/providers': { id: 1396, results: {} },
+      '/tv/1396': { id: 1396, name: 'Breaking Bad', 'watch/providers': { results: {} } },
     });
     const wp = await svc.getWatchProviders('tv', 1396, 'JP', ctx);
     expect(wp.link).toBeUndefined();
     expect(wp.flatrate).toEqual([]);
     expect(wp.free).toEqual([]);
+    expect(wp.available_regions).toEqual([]);
+    expect(wp).not.toHaveProperty('release_year');
   });
 });
 

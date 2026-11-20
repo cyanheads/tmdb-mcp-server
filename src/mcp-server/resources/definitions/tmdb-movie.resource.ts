@@ -1,6 +1,6 @@
 /**
  * @fileoverview tmdb://movie/{movie_id} — movie detail by id as injectable context.
- * Resolves through the same service method as tmdb_get_movie with the full append set.
+ * Resolves through tmdb_get_movie's service with default appends and first-page credits.
  * @module mcp-server/resources/definitions/tmdb-movie.resource
  */
 
@@ -22,7 +22,7 @@ export const tmdbMovieResource = resource('tmdb://movie/{movie_id}', {
   name: 'tmdb-movie',
   title: 'TMDB movie detail',
   description:
-    'Full movie detail by TMDB id, as injectable context for chat about a specific film. Same enriched record as tmdb_get_movie (all sub-resources appended).',
+    'Movie detail by TMDB id, with collection metadata when available and the first 15 cast and 50 crew credits with full totals. Use tmdb_get_movie credits_page for more credits or append "collection" there for collection movies.',
   mimeType: 'application/json',
   params: z.object({
     movie_id: z

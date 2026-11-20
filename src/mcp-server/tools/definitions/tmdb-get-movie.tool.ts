@@ -6,7 +6,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { escapeMarkdownInline, markdownImage, markdownLink } from '@cyanheads/mcp-ts-core/utils';
-import { getTmdbService, type MovieAppend } from '@/services/tmdb/tmdb-service.js';
+import { getTmdbService } from '@/services/tmdb/tmdb-service.js';
 import {
   CastMemberSchema,
   CrewMemberSchema,
@@ -16,10 +16,15 @@ import {
   renderCrew,
   renderGenres,
   renderSummaryList,
+  renderTitleCreditsPage,
   renderTrailer,
   SummaryItemSchema,
   TMDB_ATTRIBUTION,
   TrailerSchema,
+  titleCreditsNoticeTrailer,
+  titleCreditsPage,
+  titleCreditsPageFields,
+  titleCreditsPageInput,
 } from './_shared.js';
 
 const APPEND_VALUES = [
@@ -35,7 +40,7 @@ const APPEND_VALUES = [
 export const tmdbGetMovie = tool('tmdb_get_movie', {
   title: 'tmdb-mcp-server: get movie',
   description:
-    'Fetch full movie detail by TMDB id in a single call. Returns synopsis, runtime, genres, release date, US certification, budget/revenue, votes, top cast and key crew, YouTube trailers, poster/backdrop URLs, recommendations, similar titles, keywords, and external ids (IMDb, etc.). Sub-resources are folded in via append_to_response — trim the append array to reduce payload. Does not include streaming availability (region-specific) — use tmdb_get_watch_providers for that.',
+    'Fetch movie detail by TMDB id, including synopsis, runtime, genres, release date, US certification, budget, revenue, ratings, trailers, images, recommendations, similar titles, keywords, and external ids. With credits appended, credits_page pages cast and crew independently in TMDB order, with totals and a continuation. Collection metadata is included for movies that belong to a collection. Append "collection" to also fetch its movies in release order. Use tmdb_get_watch_providers for streaming availability.',
   annotations: { readOnlyHint: true, idempotentHint: true },
   input: z.object({
     movie_id: z
@@ -52,11 +57,12 @@ export const tmdbGetMovie = tool('tmdb_get_movie', {
         'Response language (ISO 639-1[-COUNTRY]). Defaults to the server-configured language.',
       ),
     append: z
-      .array(z.enum(APPEND_VALUES))
+      .array(z.enum([...APPEND_VALUES, 'collection']))
       .default([...APPEND_VALUES])
       .describe(
-        'Sub-resources to fold into the single request. Defaults to the full set. Trim it to reduce payload when you only need part of the record (e.g. ["credits"] for cast only).',
+        'Sub-resources to fetch. Defaults to all except "collection", which makes a second request for the collection movies when applicable. Set ["credits"] for cast and crew only.',
       ),
+    credits_page: titleCreditsPageInput,
   }),
   output: z.object({
     id: z.number().describe('TMDB movie id.'),
@@ -98,7 +104,12 @@ export const tmdbGetMovie = tool('tmdb_get_movie', {
     cast: z
       .array(CastMemberSchema)
       .optional()
-      .describe('Top-billed cast (capped). Present when credits requested.'),
+      .describe('Current cast page in TMDB order. Present when credits requested.'),
+    crew: z
+      .array(CrewMemberSchema)
+      .optional()
+      .describe('Current crew page in TMDB order. Present when credits requested.'),
+    ...titleCreditsPageFields,
     crew_key: z
       .array(CrewMemberSchema)
       .optional()
@@ -125,8 +136,26 @@ export const tmdbGetMovie = tool('tmdb_get_movie', {
       .describe(
         'Cross-platform ids (imdb_id, wikidata_id, etc.). Present when external_ids requested.',
       ),
+    collection: z
+      .object({
+        id: z.number().describe('TMDB collection id.'),
+        name: z.string().describe('Collection name.'),
+        poster_url: z
+          .string()
+          .optional()
+          .describe('Full collection poster URL. Omitted when none.'),
+        parts: z
+          .array(SummaryItemSchema)
+          .optional()
+          .describe(
+            'Collection movies in ascending release-date order with undated movies last. Present when collection requested.',
+          ),
+      })
+      .optional()
+      .describe('Collection membership. Omitted for movies without a collection.'),
   }),
   enrichment: detailEnrichment,
+  enrichmentTrailer: titleCreditsNoticeTrailer,
   errors: [
     {
       reason: 'movie_not_found',
@@ -136,17 +165,32 @@ export const tmdbGetMovie = tool('tmdb_get_movie', {
         'Verify the id with tmdb_search_titles (mode "movie") — TMDB keys on integer ids, not titles.',
       thrownBy: 'service',
     },
+    {
+      reason: 'collection_not_found',
+      code: JsonRpcErrorCode.NotFound,
+      when: 'TMDB returns 404 for the movie’s collection while fetching its parts.',
+      recovery:
+        'Retry without "collection" in append to retrieve the movie detail and collection metadata only.',
+      thrownBy: 'service',
+    },
   ],
 
   async handler(input, ctx) {
     const movie = await getTmdbService().getMovie(
       input.movie_id,
-      input.append as MovieAppend[],
+      input.append,
       ctx,
       input.language,
+      input.credits_page,
     );
     ctx.enrich({ attribution: TMDB_ATTRIBUTION });
-    return movie;
+    const page = titleCreditsPage(movie, input.credits_page);
+    if (page.next_credits_page !== undefined) {
+      const { movie_id, append, language } = input;
+      const next = { movie_id, append, language, credits_page: page.next_credits_page };
+      ctx.enrich.notice(`tmdb_get_movie(${JSON.stringify(next)})`);
+    }
+    return { ...movie, ...page };
   },
 
   format: (m) => {
@@ -171,7 +215,19 @@ export const tmdbGetMovie = tool('tmdb_get_movie', {
     if (m.overview) lines.push(`\n${escapeMarkdownInline(m.overview)}`);
     if (m.poster_url) lines.push(markdownImage('poster', m.poster_url));
     if (m.backdrop_url) lines.push(markdownImage('backdrop', m.backdrop_url));
-    if (m.cast?.length) lines.push('\n**Cast:**', ...m.cast.map((c) => `- ${renderCast(c)}`));
+    lines.push(...renderTitleCreditsPage(m));
+    if (m.cast) {
+      lines.push(
+        '\n**Cast:**',
+        ...(m.cast.length ? m.cast.map((c) => `- ${renderCast(c)}`) : ['None on this page.']),
+      );
+    }
+    if (m.crew) {
+      lines.push(
+        '\n**Crew:**',
+        ...(m.crew.length ? m.crew.map((c) => `- ${renderCrew(c)}`) : ['None on this page.']),
+      );
+    }
     if (m.crew_key?.length)
       lines.push('\n**Key crew:**', ...m.crew_key.map((c) => `- ${renderCrew(c)}`));
     if (m.trailers?.length)
@@ -179,6 +235,18 @@ export const tmdbGetMovie = tool('tmdb_get_movie', {
     if (m.keywords?.length) lines.push(`\n**Keywords:** ${renderGenres(m.keywords)}`);
     lines.push(...renderSummaryList('Recommendations', m.recommendations));
     lines.push(...renderSummaryList('Similar', m.similar));
+    if (m.collection) {
+      const { id, name, poster_url, parts } = m.collection;
+      lines.push(`\n**Collection:** ${escapeMarkdownInline(name)} (id ${id})`);
+      if (poster_url) lines.push(markdownImage('collection poster', poster_url));
+      if (parts) {
+        lines.push(
+          ...(parts.length
+            ? renderSummaryList('Collection parts', parts)
+            : ['No collection parts.']),
+        );
+      }
+    }
     if (m.external_ids) {
       lines.push(
         `\n**External ids:** ${Object.entries(m.external_ids)

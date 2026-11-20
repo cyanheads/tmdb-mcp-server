@@ -5,7 +5,7 @@
  */
 
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   initServiceForTools,
@@ -50,10 +50,114 @@ const BB_S1 = {
 };
 
 describe('tmdbGetSeason', () => {
+  it('returns episode metadata and curated crew by default and guest stars only on request', async () => {
+    await initServiceForTools({
+      '/tv/1396/season/5': {
+        ...BB_S1,
+        season_number: 5,
+        episodes: [
+          {
+            episode_number: 12,
+            name: 'Without directing or writing credits',
+            crew: [{ id: 8, name: 'Producer Only', job: 'Producer' }],
+          },
+          { episode_number: 13, name: 'Sparse' },
+          {
+            episode_number: 14,
+            id: 62162,
+            name: 'Ozymandias',
+            vote_count: 0,
+            episode_type: 'future type',
+            crew: [
+              { id: 1, name: 'Rian Johnson', job: 'Director' },
+              { id: 2, name: 'Skip Me', job: 'Producer' },
+              { id: 3, name: 'Moira Walley-Beckett', job: 'Writer' },
+              { id: 4, name: 'Teleplay Credit', job: 'Teleplay' },
+              { id: 5, name: 'Story Credit', job: 'Story' },
+            ],
+            guest_stars: [
+              { id: 6, name: 'Guest One' },
+              { id: 7, name: 'Guest Two' },
+            ],
+          },
+        ],
+      },
+    });
+    const args = { series_id: 1396, season_number: 5, language: 'fr-FR' };
+    const fetch = vi.spyOn(await import('@cyanheads/mcp-ts-core/utils'), 'fetchWithTimeout');
+    try {
+      const result = await runToolContract(tmdbGetSeason, args);
+      const data = tmdbGetSeason.output.loose().parse(result.structuredContent);
+      const expectedEpisodes = [
+        { episode_number: 12, name: 'Without directing or writing credits', crew: [] },
+        { episode_number: 13, name: 'Sparse' },
+        {
+          episode_number: 14,
+          id: 62162,
+          name: 'Ozymandias',
+          vote_count: 0,
+          episode_type: 'future type',
+          crew: [
+            { id: 1, name: 'Rian Johnson', job: 'Director' },
+            { id: 3, name: 'Moira Walley-Beckett', job: 'Writer' },
+            { id: 4, name: 'Teleplay Credit', job: 'Teleplay' },
+            { id: 5, name: 'Story Credit', job: 'Story' },
+          ],
+        },
+      ];
+      expect(data.episodes).toEqual(expectedEpisodes);
+      const text = JSON.stringify(result.content);
+      for (const term of [
+        'id 62162',
+        '0 votes',
+        'future type',
+        'Rian Johnson',
+        'Moira Walley-Beckett',
+        'Bryan Cranston',
+      ]) {
+        expect(text).toContain(term);
+      }
+      expect(text).toContain('**Crew:** None');
+      expect(text).not.toMatch(/Guest One|Guest Two|Skip Me|Producer Only/);
+
+      const explicitFalse = await runToolContract(tmdbGetSeason, {
+        ...args,
+        include_guest_stars: false,
+      });
+      expect(explicitFalse).toEqual(result);
+      const guests = await runToolContract(tmdbGetSeason, { ...args, include_guest_stars: true });
+      expect(guests.structuredContent).toEqual({
+        ...data,
+        episodes: [
+          expectedEpisodes[0],
+          expectedEpisodes[1],
+          {
+            ...expectedEpisodes[2],
+            guest_stars: [
+              { id: 6, name: 'Guest One' },
+              { id: 7, name: 'Guest Two' },
+            ],
+          },
+        ],
+      });
+      expect(JSON.stringify(guests.content)).toContain('Guest One');
+      expect(JSON.stringify(guests.content)).toContain('Guest Two');
+      expect(fetch).toHaveBeenCalledTimes(3);
+      for (const [request] of fetch.mock.calls) {
+        expect(new URL(String(request)).searchParams.get('language')).toBe('fr-FR');
+      }
+    } finally {
+      fetch.mockRestore();
+    }
+  });
   it('returns the episode list and echoes series_id (headline path)', async () => {
     await initServiceForTools({ '/tv/1396/season/1': BB_S1 });
     const ctx = createMockContext({ errors: tmdbGetSeason.errors });
-    const input = tmdbGetSeason.input.parse({ series_id: 1396, season_number: 1 });
+    const input = tmdbGetSeason.input.parse({
+      series_id: 1396,
+      season_number: 1,
+      include_guest_stars: true,
+    });
     const season = await tmdbGetSeason.handler(input, ctx);
 
     expect(season.series_id).toBe(1396); // echoed — not in the API response
@@ -70,15 +174,36 @@ describe('tmdbGetSeason', () => {
     expect(getEnrichment(ctx).attribution).toContain('TMDB API');
   });
 
-  it('throws season_not_found on a 404', async () => {
+  it('rejects invalid inputs and preserves season_not_found recovery on both surfaces', async () => {
     await initServiceForTools();
+    for (const input of [
+      { series_id: 1396, season_number: -1 },
+      { series_id: 1396, season_number: 0, include_guest_stars: 'sometimes' },
+    ]) {
+      const result = await runToolContract<Parameters<typeof runToolContract>[0]>(
+        tmdbGetSeason,
+        input,
+      );
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.structuredContent)).toContain('-32602');
+    }
     throwForPath('/tv/1396/season/99', JsonRpcErrorCode.NotFound);
-    const ctx = createMockContext({ errors: tmdbGetSeason.errors });
-    const input = tmdbGetSeason.input.parse({ series_id: 1396, season_number: 99 });
-    await expect(tmdbGetSeason.handler(input, ctx)).rejects.toMatchObject({
-      code: JsonRpcErrorCode.NotFound,
-      data: { reason: 'season_not_found' },
+    const missing = await runToolContract(tmdbGetSeason, {
+      series_id: 1396,
+      season_number: 99,
     });
+    expect(missing.isError).toBe(true);
+    for (const surface of [missing.structuredContent, missing.content]) {
+      expect(JSON.stringify(surface)).toContain('season_not_found');
+      expect(JSON.stringify(surface)).toContain('tmdb_get_show');
+    }
+  });
+
+  it('returns an empty specials episode list as success', async () => {
+    await initServiceForTools({ '/tv/1396/season/0': { season_number: 0, name: 'Specials' } });
+    const result = await runToolContract(tmdbGetSeason, { series_id: 1396, season_number: 0 });
+    expect(result.structuredContent).toMatchObject({ season_number: 0, episodes: [] });
+    expect(JSON.stringify(result.content)).toContain('episodes:** 0');
   });
 
   it('format() renders episodes with guest stars', () => {

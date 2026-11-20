@@ -2,8 +2,8 @@
 
 **Server:** tmdb-mcp-server
 **Version:** 0.2.0
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.18`
-**Engines:** Bun ≥1.4.0, Node ≥24.0.0
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.22`
+**Engines:** Bun ≥1.4.4, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/server` ^2.4.0
 **Zod:** ^4.6.7
 
@@ -100,7 +100,7 @@ const DEFAULT_APPEND: MovieAppend[] = ['credits', 'videos', 'recommendations', '
 export const tmdbMovieResource = resource('tmdb://movie/{movie_id}', {
   name: 'tmdb-movie',
   title: 'TMDB movie detail',
-  description: 'Full movie detail by TMDB id — the same enriched record as tmdb_get_movie.',
+  description: 'Movie detail with first-page credits and collection membership. Use tmdb_get_movie for later credit pages and collection parts.',
   mimeType: 'application/json',
   params: z.object({
     movie_id: z.string().regex(/^\d+$/).describe('TMDB movie id (integer). From tmdb_search_titles.'),
@@ -372,7 +372,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 ## Bundling
 
-`bun run bundle` packs the server and root `skills/`, prunes dev dependencies, then strips dependency documentation, platform-specific native bindings, node-gyp build output, and build-only framework files. Root development paths belong in `.mcpbignore` as anchored patterns. The cleaner and packaging linter deliberately match dependency skill documentation at package roots only: SDK `dist/ext/skills` modules are runtime code and must survive ([cyanheads/mcp-ts-core#794](https://github.com/cyanheads/mcp-ts-core/issues/794)). Keep both `AGENT_DOC_ENTRY` selectors aligned and retain the regression in `tests/scripts/clean-mcpb.test.ts` when syncing scripts. MCPB is stdio-only.
+`bun run bundle` packs the server and root `skills/`, prunes dev dependencies, then strips dependency documentation, platform-specific native bindings, node-gyp build output, and build-only framework files. Root development paths belong in `.mcpbignore` as anchored patterns. The cleaner and packaging linter match agent documentation directories and `AGENTS.md`/`CLAUDE.md` at package roots, and `SKILL.md` anywhere inside dependencies. SDK `dist/ext/skills` modules are runtime code and must survive ([cyanheads/mcp-ts-core#794](https://github.com/cyanheads/mcp-ts-core/issues/794)). Keep both `AGENT_DOC_ENTRY` selectors aligned and retain the regression in `tests/scripts/clean-mcpb.test.ts` when syncing scripts. MCPB is stdio-only.
 
 **Adding an env var requires both files:** `server.json` (registry discovery, `environmentVariables[]`) and `manifest.json` (bundle install UX, `mcp_config.env` + `user_config`). `lint:packaging` (run by `devcheck`) verifies the env var names match, that every `user_config` option is wired into `mcp_config.env` as `"X": "${user_config.X}"` (the host substitutes nothing else — `"${X}"` reaches the server as that literal string), and that an optional string option carries `"default": ""`.
 

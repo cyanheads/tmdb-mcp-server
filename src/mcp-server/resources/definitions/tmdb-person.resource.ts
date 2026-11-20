@@ -12,7 +12,7 @@ export const tmdbPersonResource = resource('tmdb://person/{person_id}', {
   name: 'tmdb-person',
   title: 'TMDB person detail',
   description:
-    'Person detail and the first 50 cast and 50 crew credits, ordered by release year descending, with full totals. Use tmdb_get_person credits_page to retrieve later credits.',
+    'Person detail and the first 50 cast and 50 crew credits with full totals. Credits are newest first by movie release year or first credited TV appearance year; TV credits use series premiere year when the appearance date is missing. Use tmdb_get_person credits_page to retrieve later credits.',
   mimeType: 'application/json',
   params: z.object({
     person_id: z

@@ -40,18 +40,21 @@ import type {
   RawSeason,
   RawShow,
   RawSummaryItem,
+  RawTitleCredits,
   RawVideo,
-  RawWatchProviders,
+  RawWatchProviderTitle,
   SeasonDetail,
   SeasonSummary,
   ShowDetail,
   SummaryItem,
+  TitleCredits,
   Trailer,
   WatchProviders,
 } from './types.js';
 
 const BASE_URL = 'https://api.themoviedb.org/3';
 const TIMEOUT_MS = 15_000;
+const COLLECTION_DEADLINE_MS = 40_000;
 
 /** Default image sizes per field — all valid members of the cached size arrays. */
 const POSTER_SIZE = 'w500';
@@ -60,15 +63,18 @@ const PROFILE_SIZE = 'w185';
 const STILL_SIZE = 'w300';
 const LOGO_SIZE = 'w92';
 
-/** Display caps for the detail endpoints' capped arrays. */
-const CAST_CAP = 15;
+/** Number of cast and crew rows returned per title credits page. */
+export const CAST_CREDITS_PAGE_SIZE = 15;
+export const CREW_CREDITS_PAGE_SIZE = 50;
 const CREDITS_CAP = 50;
 
 /** Crew jobs surfaced in the curated `crew_key` set. */
 const KEY_CREW_JOBS = new Set(['Director', 'Writer', 'Screenplay', 'Story', 'Producer', 'Creator']);
+const EPISODE_CREW_JOBS = new Set(['Director', 'Writer', 'Teleplay', 'Story']);
 
 /** Append sets fixed per endpoint. */
 export type MovieAppend =
+  | 'collection'
   | 'credits'
   | 'videos'
   | 'recommendations'
@@ -116,6 +122,8 @@ const GENDER_LABELS: Record<number, GenderLabel> = {
   2: 'male',
   3: 'non-binary',
 };
+
+type DetailKind = 'collection' | 'movie' | 'show' | 'season' | 'person' | 'title';
 
 export class TmdbService {
   private readonly token: string;
@@ -238,18 +246,25 @@ export class TmdbService {
   }
 
   /** Extracts a 4-digit year from a TMDB date string (`YYYY-MM-DD`). */
-  private year(date: string | undefined): number | undefined {
+  private year(date: string | null | undefined): number | undefined {
     if (!date) return;
     const y = Number.parseInt(date.slice(0, 4), 10);
     return Number.isFinite(y) ? y : undefined;
   }
 
   private castMember(raw: RawCastMember): CastMember {
+    const character = raw.character ?? raw.roles?.[0]?.character;
     return {
       id: raw.id,
       name: raw.name ?? '',
-      ...(raw.character ? { character: raw.character } : {}),
+      ...(character ? { character } : {}),
       ...(typeof raw.order === 'number' ? { order: raw.order } : {}),
+      ...(raw.roles
+        ? { roles: raw.roles.map(({ character, episode_count }) => ({ character, episode_count })) }
+        : {}),
+      ...(typeof raw.total_episode_count === 'number'
+        ? { total_episode_count: raw.total_episode_count }
+        : {}),
       ...this.urlField('profile_url', raw.profile_path, PROFILE_SIZE),
     };
   }
@@ -258,9 +273,32 @@ export class TmdbService {
     return {
       id: raw.id,
       name: raw.name ?? '',
-      job: raw.job ?? '',
+      job: raw.job ?? raw.jobs?.[0]?.job ?? '',
       ...(raw.department ? { department: raw.department } : {}),
+      ...(raw.jobs
+        ? { jobs: raw.jobs.map(({ job, episode_count }) => ({ job, episode_count })) }
+        : {}),
+      ...(typeof raw.total_episode_count === 'number'
+        ? { total_episode_count: raw.total_episode_count }
+        : {}),
       ...this.urlField('profile_url', raw.profile_path, PROFILE_SIZE),
+    };
+  }
+
+  private titleCredits(raw: RawTitleCredits | undefined, page: number): TitleCredits {
+    const cast = raw?.cast ?? [];
+    const crew = raw?.crew ?? [];
+    const crewKey = crew.flatMap(({ jobs, total_episode_count: _, ...person }) =>
+      (jobs ?? [person]).flatMap(({ job }) =>
+        job && KEY_CREW_JOBS.has(job) ? [this.crewMember({ ...person, job })] : [],
+      ),
+    );
+    return {
+      cast: pageSlice(cast, page, CAST_CREDITS_PAGE_SIZE).map((person) => this.castMember(person)),
+      cast_total: cast.length,
+      crew: pageSlice(crew, page, CREW_CREDITS_PAGE_SIZE).map((person) => this.crewMember(person)),
+      crew_total: crew.length,
+      ...(crewKey.length ? { crew_key: crewKey } : {}),
     };
   }
 
@@ -366,23 +404,78 @@ export class TmdbService {
 
   /* ──────────────────────────── Movie detail ───────────────────────────── */
 
-  async getMovie(
+  getMovie(
     movieId: number,
     append: MovieAppend[],
     ctx: Context,
     language?: string,
+    creditsPage = 1,
   ): Promise<MovieDetail> {
-    const qs = new URLSearchParams({ language: language ?? this.defaultLanguage });
-    if (append.length > 0) qs.set('append_to_response', append.join(','));
-    const raw = await this.fetchDetail<RawMovie>(`/movie/${movieId}`, ctx, qs, 'movie', movieId);
-    return this.normalizeMovie(raw, append);
+    const resolvedLanguage = language ?? this.defaultLanguage;
+    const qs = new URLSearchParams({ language: resolvedLanguage });
+    const upstreamAppend = append.filter((entry) => entry !== 'collection');
+    if (upstreamAppend.length > 0) qs.set('append_to_response', upstreamAppend.join(','));
+
+    const fetchMovie = async (requestContext: Context) => {
+      const raw = await this.fetchDetail<RawMovie>(
+        `/movie/${movieId}`,
+        requestContext,
+        qs,
+        'movie',
+        movieId,
+      );
+      return this.normalizeMovie(raw, append, creditsPage);
+    };
+
+    if (!append.includes('collection')) return fetchMovie(ctx);
+    return withRetry(
+      async ({ signal }) => {
+        const scopedContext = { ...ctx, signal };
+        const movie = await fetchMovie(scopedContext);
+        if (movie.collection) {
+          movie.collection.parts = await this.getCollectionParts(
+            movie.collection.id,
+            resolvedLanguage,
+            scopedContext,
+          );
+        }
+        return movie;
+      },
+      {
+        operation: 'TMDB movie and collection lookup',
+        context: ctx,
+        signal: ctx.signal,
+        deadlineMs: COLLECTION_DEADLINE_MS,
+        // The shared budget wraps both requests. Each HTTP call already owns its retries.
+        isTransient: () => false,
+      },
+    );
   }
 
-  private normalizeMovie(raw: RawMovie, append: MovieAppend[]): MovieDetail {
+  private async getCollectionParts(
+    id: number,
+    language: string,
+    ctx: Context,
+  ): Promise<SummaryItem[]> {
+    const collection = await this.fetchDetail<{ parts?: RawSummaryItem[] }>(
+      `/collection/${id}`,
+      ctx,
+      new URLSearchParams({ language }),
+      'collection',
+      id,
+    );
+    return (collection.parts ?? [])
+      .toSorted((a, b) => {
+        if (!a.release_date) return b.release_date ? 1 : 0;
+        if (!b.release_date) return -1;
+        return a.release_date.localeCompare(b.release_date);
+      })
+      .map((part) => this.summaryItem({ ...part, media_type: 'movie' }, 'movie'));
+  }
+
+  private normalizeMovie(raw: RawMovie, append: MovieAppend[], creditsPage: number): MovieDetail {
     const has = (k: MovieAppend) => append.includes(k);
-    const crewKey = (raw.credits?.crew ?? [])
-      .filter((c) => c.job && KEY_CREW_JOBS.has(c.job))
-      .map((c) => this.crewMember(c));
+    const collection = raw.belongs_to_collection;
 
     return {
       id: raw.id,
@@ -407,10 +500,16 @@ export class TmdbService {
       })(),
       ...this.urlField('poster_url', raw.poster_path, POSTER_SIZE),
       ...this.urlField('backdrop_url', raw.backdrop_path, BACKDROP_SIZE),
-      ...(has('credits') && raw.credits?.cast
-        ? { cast: raw.credits.cast.slice(0, CAST_CAP).map((c) => this.castMember(c)) }
+      ...(has('credits') ? this.titleCredits(raw.credits, creditsPage) : {}),
+      ...(collection
+        ? {
+            collection: {
+              id: collection.id,
+              name: collection.name ?? '',
+              ...this.urlField('poster_url', collection.poster_path, POSTER_SIZE),
+            },
+          }
         : {}),
-      ...(has('credits') && crewKey.length > 0 ? { crew_key: crewKey } : {}),
       ...(has('videos') ? { trailers: this.trailers(raw.videos?.results) } : {}),
       ...(has('recommendations') && raw.recommendations?.results
         ? { recommendations: raw.recommendations.results.map((r) => this.summaryItem(r, 'movie')) }
@@ -442,11 +541,17 @@ export class TmdbService {
     append: ShowAppend[],
     ctx: Context,
     language?: string,
+    creditsPage = 1,
   ): Promise<ShowDetail> {
     const qs = new URLSearchParams({ language: language ?? this.defaultLanguage });
-    if (append.length > 0) qs.set('append_to_response', append.join(','));
+    if (append.length > 0) {
+      qs.set(
+        'append_to_response',
+        append.map((entry) => (entry === 'credits' ? 'aggregate_credits' : entry)).join(','),
+      );
+    }
     const raw = await this.fetchDetail<RawShow>(`/tv/${seriesId}`, ctx, qs, 'show', seriesId);
-    return this.normalizeShow(raw, append);
+    return this.normalizeShow(raw, append, creditsPage);
   }
 
   private episodeSummary(raw: RawEpisodeSummary): EpisodeSummary {
@@ -462,11 +567,8 @@ export class TmdbService {
     };
   }
 
-  private normalizeShow(raw: RawShow, append: ShowAppend[]): ShowDetail {
+  private normalizeShow(raw: RawShow, append: ShowAppend[], creditsPage: number): ShowDetail {
     const has = (k: ShowAppend) => append.includes(k);
-    const crewKey = (raw.credits?.crew ?? [])
-      .filter((c) => c.job && KEY_CREW_JOBS.has(c.job))
-      .map((c) => this.crewMember(c));
     const networks: Network[] = (raw.networks ?? []).map((n) => ({
       id: n.id,
       name: n.name ?? '',
@@ -521,10 +623,7 @@ export class TmdbService {
       ...(raw.next_episode_to_air
         ? { next_episode_to_air: this.episodeSummary(raw.next_episode_to_air) }
         : {}),
-      ...(has('credits') && raw.credits?.cast
-        ? { cast: raw.credits.cast.slice(0, CAST_CAP).map((c) => this.castMember(c)) }
-        : {}),
-      ...(has('credits') && crewKey.length > 0 ? { crew_key: crewKey } : {}),
+      ...(has('credits') ? this.titleCredits(raw.aggregate_credits, creditsPage) : {}),
       ...(has('videos') ? { trailers: this.trailers(raw.videos?.results) } : {}),
       ...(has('recommendations') && raw.recommendations?.results
         ? { recommendations: raw.recommendations.results.map((r) => this.summaryItem(r, 'tv')) }
@@ -552,6 +651,7 @@ export class TmdbService {
     seasonNumber: number,
     ctx: Context,
     language?: string,
+    includeGuestStars = false,
   ): Promise<SeasonDetail> {
     const qs = new URLSearchParams({
       language: language ?? this.defaultLanguage,
@@ -568,12 +668,22 @@ export class TmdbService {
     const episodes: Episode[] = (raw.episodes ?? []).map((e) => ({
       episode_number: e.episode_number,
       name: e.name ?? '',
+      ...(typeof e.id === 'number' ? { id: e.id } : {}),
       ...(e.overview ? { overview: e.overview } : {}),
       ...(e.air_date ? { air_date: e.air_date } : {}),
       ...(typeof e.runtime === 'number' ? { runtime_minutes: e.runtime } : {}),
       ...(typeof e.vote_average === 'number' ? { vote_average: e.vote_average } : {}),
+      ...(typeof e.vote_count === 'number' ? { vote_count: e.vote_count } : {}),
+      ...(typeof e.episode_type === 'string' ? { episode_type: e.episode_type } : {}),
+      ...(e.crew
+        ? {
+            crew: e.crew.flatMap(({ id, name, job }) =>
+              job && EPISODE_CREW_JOBS.has(job) ? [{ id, name: name ?? '', job }] : [],
+            ),
+          }
+        : {}),
       ...this.urlField('still_url', e.still_path, STILL_SIZE),
-      ...(e.guest_stars?.length
+      ...(includeGuestStars && e.guest_stars?.length
         ? { guest_stars: e.guest_stars.map((g) => this.castMember(g)) }
         : {}),
     }));
@@ -619,39 +729,35 @@ export class TmdbService {
     const castRaw = raw.combined_credits?.cast ?? [];
     const crewRaw = raw.combined_credits?.crew ?? [];
 
-    const castSorted = [...castRaw].sort((a, b) => this.creditYear(b) - this.creditYear(a));
-    const crewSorted = [...crewRaw].sort((a, b) => this.creditYear(b) - this.creditYear(a));
+    const cast_credits: PersonCastCredit[] = this.personCreditPage(castRaw, creditsPage).map(
+      ({ credit: c, year: releaseYear }) => ({
+        id: c.id,
+        media_type: c.media_type ?? 'movie',
+        title: c.title ?? c.name ?? '',
+        ...(c.character ? { character: c.character } : {}),
+        ...(releaseYear !== undefined ? { release_year: releaseYear } : {}),
+        ...(c.media_type === 'tv' && typeof c.episode_count === 'number'
+          ? { episode_count: c.episode_count }
+          : {}),
+        ...(typeof c.vote_average === 'number' ? { vote_average: c.vote_average } : {}),
+        ...this.urlField('poster_url', c.poster_path, POSTER_SIZE),
+      }),
+    );
 
-    const offset = (creditsPage - 1) * CREDITS_CAP;
-    const cast_credits: PersonCastCredit[] = castSorted
-      .slice(offset, offset + CREDITS_CAP)
-      .map((c) => {
-        const releaseYear = this.year(c.release_date ?? c.first_air_date);
-        return {
-          id: c.id,
-          media_type: (c.media_type ?? 'movie') as MediaType,
-          title: c.title ?? c.name ?? '',
-          ...(c.character ? { character: c.character } : {}),
-          ...(releaseYear !== undefined ? { release_year: releaseYear } : {}),
-          ...(typeof c.vote_average === 'number' ? { vote_average: c.vote_average } : {}),
-          ...this.urlField('poster_url', c.poster_path, POSTER_SIZE),
-        };
-      });
-
-    const crew_credits: PersonCrewCredit[] = crewSorted
-      .slice(offset, offset + CREDITS_CAP)
-      .map((c) => {
-        const releaseYear = this.year(c.release_date ?? c.first_air_date);
-        return {
-          id: c.id,
-          media_type: (c.media_type ?? 'movie') as MediaType,
-          title: c.title ?? c.name ?? '',
-          job: c.job ?? '',
-          ...(c.department ? { department: c.department } : {}),
-          ...(releaseYear !== undefined ? { release_year: releaseYear } : {}),
-          ...this.urlField('poster_url', c.poster_path, POSTER_SIZE),
-        };
-      });
+    const crew_credits: PersonCrewCredit[] = this.personCreditPage(crewRaw, creditsPage).map(
+      ({ credit: c, year: releaseYear }) => ({
+        id: c.id,
+        media_type: c.media_type ?? 'movie',
+        title: c.title ?? c.name ?? '',
+        job: c.job ?? '',
+        ...(c.department ? { department: c.department } : {}),
+        ...(releaseYear !== undefined ? { release_year: releaseYear } : {}),
+        ...(c.media_type === 'tv' && typeof c.episode_count === 'number'
+          ? { episode_count: c.episode_count }
+          : {}),
+        ...this.urlField('poster_url', c.poster_path, POSTER_SIZE),
+      }),
+    );
 
     return {
       id: raw.id,
@@ -677,8 +783,17 @@ export class TmdbService {
     };
   }
 
-  private creditYear(c: RawCombinedCredit): number {
-    return this.year(c.release_date ?? c.first_air_date) ?? 0;
+  private personCreditPage(credits: RawCombinedCredit[], page: number) {
+    const sorted = credits
+      .map((credit) => ({
+        credit,
+        year:
+          credit.media_type === 'tv'
+            ? (this.year(credit.first_credit_air_date) ?? this.year(credit.first_air_date))
+            : this.year(credit.release_date ?? credit.first_air_date),
+      }))
+      .sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+    return pageSlice(sorted, page, CREDITS_CAP);
   }
 
   /* ──────────────────────────── Discover ───────────────────────────────── */
@@ -782,19 +897,28 @@ export class TmdbService {
     watchRegion: string,
     ctx: Context,
   ): Promise<WatchProviders> {
-    const raw = await this.fetchDetail<RawWatchProviders>(
-      `/${mediaType}/${id}/watch/providers`,
+    const raw = await this.fetchDetail<RawWatchProviderTitle>(
+      `/${mediaType}/${id}`,
       ctx,
-      new URLSearchParams(),
+      new URLSearchParams({
+        language: this.defaultLanguage,
+        append_to_response: 'watch/providers',
+      }),
       'title',
       id,
     );
 
-    const region = raw.results?.[watchRegion];
+    const regions = raw['watch/providers']?.results ?? {};
+    const region = Object.hasOwn(regions, watchRegion) ? regions[watchRegion] : undefined;
+    const title = mediaType === 'movie' ? raw.title : raw.name;
+    const releaseYear = this.year(mediaType === 'movie' ? raw.release_date : raw.first_air_date);
     return {
       id,
       media_type: mediaType,
       region: watchRegion,
+      available_regions: Object.keys(regions).sort(),
+      ...(title ? { title } : {}),
+      ...(releaseYear !== undefined ? { release_year: releaseYear } : {}),
       ...(region?.link ? { link: region.link } : {}),
       flatrate: (region?.flatrate ?? []).map((p) => this.provider(p)),
       rent: (region?.rent ?? []).map((p) => this.provider(p)),
@@ -832,7 +956,7 @@ export class TmdbService {
     path: string,
     ctx: Context,
     qs: URLSearchParams,
-    kind: 'movie' | 'show' | 'season' | 'person' | 'title',
+    kind: DetailKind,
     id: number,
   ): Promise<T> {
     try {
@@ -852,6 +976,11 @@ export class TmdbService {
   }
 }
 
+function pageSlice<T>(items: T[], page: number, size: number): T[] {
+  const offset = (page - 1) * size;
+  return items.slice(offset, offset + size);
+}
+
 /* ──────────────────────────── Error helpers ────────────────────────────── */
 
 function isNotFound(err: unknown): boolean {
@@ -863,11 +992,10 @@ function isNotFound(err: unknown): boolean {
   );
 }
 
-function notFoundMessage(
-  kind: 'movie' | 'show' | 'season' | 'person' | 'title',
-  id: number,
-): string {
+function notFoundMessage(kind: DetailKind, id: number): string {
   switch (kind) {
+    case 'collection':
+      return `No TMDB collection found for id ${id}.`;
     case 'movie':
       return `No TMDB movie found for id ${id}.`;
     case 'show':
@@ -886,8 +1014,10 @@ function notFoundMessage(
  * client surfaces. Mirrors each tool/resource `errors[]` contract's `recovery`
  * string — the contract is the source of truth; this keeps the wire in sync.
  */
-function notFoundRecovery(kind: 'movie' | 'show' | 'season' | 'person' | 'title'): string {
+function notFoundRecovery(kind: DetailKind): string {
   switch (kind) {
+    case 'collection':
+      return 'Retry without "collection" in append to retrieve the movie detail and collection metadata only.';
     case 'movie':
       return 'Verify the id with tmdb_search_titles (mode "movie") — TMDB keys on integer ids, not titles.';
     case 'show':

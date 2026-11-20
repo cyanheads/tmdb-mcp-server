@@ -7,7 +7,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { escapeMarkdownInline, markdownImage, markdownLink } from '@cyanheads/mcp-ts-core/utils';
-import { getTmdbService, type ShowAppend } from '@/services/tmdb/tmdb-service.js';
+import { getTmdbService } from '@/services/tmdb/tmdb-service.js';
 import {
   CastMemberSchema,
   CrewMemberSchema,
@@ -17,10 +17,17 @@ import {
   renderCrew,
   renderGenres,
   renderSummaryList,
+  renderTitleCreditsPage,
   renderTrailer,
+  SeriesCastMemberSchema,
+  SeriesCrewMemberSchema,
   SummaryItemSchema,
   TMDB_ATTRIBUTION,
   TrailerSchema,
+  titleCreditsNoticeTrailer,
+  titleCreditsPage,
+  titleCreditsPageFields,
+  titleCreditsPageInput,
 } from './_shared.js';
 
 const APPEND_VALUES = [
@@ -52,7 +59,7 @@ const EpisodeSummarySchema = z
 export const tmdbGetShow = tool('tmdb_get_show', {
   title: 'tmdb-mcp-server: get show',
   description:
-    'Fetch full TV show detail by TMDB series id in a single call. Returns overview, genres, first/last air date, status, season and episode counts, creators, networks, season summaries, top cast and key crew, YouTube trailers, US content rating, recommendations, similar shows, keywords, and external ids. The series mirror of tmdb_get_movie; sub-resources fold in via append_to_response. Pass a season_number from seasons[] to tmdb_get_season for the episode list. Does not include streaming availability — use tmdb_get_watch_providers.',
+    'Fetch TV show detail by TMDB series id in a single request. Returns overview, genres, first and last air dates, status, season and episode counts, creators, networks, season summaries, trailers, US content rating, recommendations, similar shows, keywords, and external ids. With credits appended, credits_page pages series-wide cast and crew independently in TMDB order, including grouped roles, jobs, and episode counts. Pass a season_number from seasons to tmdb_get_season for episode detail, or use tmdb_get_watch_providers for streaming availability.',
   annotations: { readOnlyHint: true, idempotentHint: true },
   input: z.object({
     series_id: z
@@ -72,8 +79,9 @@ export const tmdbGetShow = tool('tmdb_get_show', {
       .array(z.enum(APPEND_VALUES))
       .default([...APPEND_VALUES])
       .describe(
-        'Sub-resources to fold into the single request. Defaults to the full set. Trim to reduce payload (e.g. ["credits"]).',
+        'Sub-resources to fold into the single request. Defaults to the full set. Set ["credits"] for series-wide cast and crew only.',
       ),
+    credits_page: titleCreditsPageInput,
   }),
   output: z.object({
     id: z.number().describe('TMDB series id.'),
@@ -160,9 +168,14 @@ export const tmdbGetShow = tool('tmdb_get_show', {
       'Next scheduled episode. Omitted when absent.',
     ),
     cast: z
-      .array(CastMemberSchema)
+      .array(SeriesCastMemberSchema)
       .optional()
-      .describe('Top-billed cast (capped). Present when credits requested.'),
+      .describe('Current series cast page in TMDB order. Present when credits requested.'),
+    crew: z
+      .array(SeriesCrewMemberSchema)
+      .optional()
+      .describe('Current series crew page in TMDB order. Present when credits requested.'),
+    ...titleCreditsPageFields,
     crew_key: z
       .array(CrewMemberSchema)
       .optional()
@@ -189,6 +202,7 @@ export const tmdbGetShow = tool('tmdb_get_show', {
       .describe('Cross-platform ids. Present when external_ids requested.'),
   }),
   enrichment: detailEnrichment,
+  enrichmentTrailer: titleCreditsNoticeTrailer,
   errors: [
     {
       reason: 'show_not_found',
@@ -203,12 +217,19 @@ export const tmdbGetShow = tool('tmdb_get_show', {
   async handler(input, ctx) {
     const show = await getTmdbService().getShow(
       input.series_id,
-      input.append as ShowAppend[],
+      input.append,
       ctx,
       input.language,
+      input.credits_page,
     );
     ctx.enrich({ attribution: TMDB_ATTRIBUTION });
-    return show;
+    const page = titleCreditsPage(show, input.credits_page);
+    if (page.next_credits_page !== undefined) {
+      const { series_id, append, language } = input;
+      const next = { series_id, append, language, credits_page: page.next_credits_page };
+      ctx.enrich.notice(`tmdb_get_show(${JSON.stringify(next)})`);
+    }
+    return { ...show, ...page };
   },
 
   format: (s) => {
@@ -259,7 +280,19 @@ export const tmdbGetShow = tool('tmdb_get_show', {
     if (s.last_episode_to_air)
       lines.push(`\n**Last aired:** ${formatEpisode(s.last_episode_to_air)}`);
     if (s.next_episode_to_air) lines.push(`**Next:** ${formatEpisode(s.next_episode_to_air)}`);
-    if (s.cast?.length) lines.push('\n**Cast:**', ...s.cast.map((c) => `- ${renderCast(c)}`));
+    lines.push(...renderTitleCreditsPage(s));
+    if (s.cast) {
+      lines.push(
+        '\n**Cast:**',
+        ...(s.cast.length ? s.cast.map((c) => `- ${renderCast(c)}`) : ['None on this page.']),
+      );
+    }
+    if (s.crew) {
+      lines.push(
+        '\n**Crew:**',
+        ...(s.crew.length ? s.crew.map((c) => `- ${renderCrew(c)}`) : ['None on this page.']),
+      );
+    }
     if (s.crew_key?.length)
       lines.push('\n**Key crew:**', ...s.crew_key.map((c) => `- ${renderCrew(c)}`));
     if (s.trailers?.length)

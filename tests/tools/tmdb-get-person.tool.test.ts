@@ -29,6 +29,62 @@ afterEach(() => {
 });
 
 describe('tmdbGetPerson', () => {
+  it('orders TV credits by credit year before slicing and renders known episode counts', async () => {
+    const recent = Array.from({ length: 49 }, (_, id) => ({
+      id: id + 10,
+      media_type: 'movie',
+      title: `Recent ${id}`,
+      release_date: '2024-01-01',
+    }));
+    const tvCredit = {
+      id: 2,
+      media_type: 'tv',
+      name: 'Long-running show',
+      first_air_date: '1968-01-01',
+      first_credit_air_date: '2010-01-01',
+      episode_count: 1,
+    };
+    await initServiceForTools({
+      '/person/1': {
+        id: 1,
+        name: 'Person',
+        combined_credits: {
+          cast: [
+            ...recent,
+            tvCredit,
+            { ...tvCredit, first_credit_air_date: ' ', episode_count: 0 },
+            { id: 3, media_type: 'movie', title: 'Earlier', release_date: '1990-01-01' },
+          ],
+          crew: [{ ...tvCredit, job: 'Director', episode_count: 3 }],
+        },
+      },
+    });
+    const first = await runToolContract(tmdbGetPerson, { person_id: 1 });
+    expect(first.structuredContent).toMatchObject({
+      next_credits_page: 2,
+      cast_credits_total: 52,
+      crew_credits: [{ id: 2, release_year: 2010, episode_count: 3 }],
+    });
+    const firstCast = tmdbGetPerson.output.parse(first.structuredContent).cast_credits;
+    expect(firstCast).toHaveLength(50);
+    expect(firstCast.at(-1)).toMatchObject({ id: 2, release_year: 2010, episode_count: 1 });
+    expect(JSON.stringify(first.content)).toContain(
+      'Long-running show (2010) [tv, id 2] (1 episode)',
+    );
+    expect(JSON.stringify(first.content)).toContain('Director (3 episodes)');
+
+    const second = await runToolContract(tmdbGetPerson, { person_id: 1, credits_page: 2 });
+    const secondCast = tmdbGetPerson.output.parse(second.structuredContent).cast_credits;
+    expect(secondCast).toMatchObject([
+      { id: 3, release_year: 1990 },
+      { id: 2, release_year: 1968, episode_count: 0 },
+    ]);
+    expect(secondCast[0]).not.toHaveProperty('episode_count');
+    expect(second.structuredContent).toMatchObject({ crew_credits: [] });
+    expect(JSON.stringify(second.content)).toContain(
+      'Long-running show (1968) [tv, id 2] (0 episodes)',
+    );
+  });
   it.each([
     [102, 51],
     [50, 0],

@@ -13,9 +13,9 @@ Film and television metadata via The Movie Database (TMDB) v3 REST API — searc
 | Name | Description | Key Inputs | Annotations |
 |:-----|:------------|:-----------|:------------|
 | `tmdb_search_titles` | Search movies, TV, and people by name. Required first step — TMDB keys on integer IDs, not titles. Returns ranked results with `id`, `media_type`, title/name, year, overview, `vote_average`, genre names, and full poster/profile URLs. | `query`, `mode`, `year`, `language`, `include_adult`, `page` | `readOnlyHint`, `openWorldHint` |
-| `tmdb_get_movie` | Full movie detail by id. Synopsis, runtime, genres, release date, US certification, budget/revenue, votes, full cast + key crew, trailer keys, poster/backdrop URLs, recommendations, similar, keywords. One call via `append_to_response`. | `movie_id`, `language`, `append` | `readOnlyHint`, `idempotentHint` |
-| `tmdb_get_show` | Full TV show detail by id. Overview, genres, first/last air date, status, season/episode counts, creators, networks, season summaries, cast, trailers, recommendations. Mirror of `get_movie` for series. | `series_id`, `language`, `append` | `readOnlyHint`, `idempotentHint` |
-| `tmdb_get_season` | Episode list for one season of a show. Episode names, air dates, overviews, guest stars, still URLs, vote averages. Bridges the gap between show-level summary and per-episode detail. | `series_id`, `season_number`, `language` | `readOnlyHint`, `idempotentHint` |
+| `tmdb_get_movie` | Movie detail, paged credits, and franchise membership. Request `collection` for release-ordered parts. | `movie_id`, `language`, `append`, `credits_page` | `readOnlyHint`, `idempotentHint` |
+| `tmdb_get_show` | Series detail with paged series-wide cast roles and crew jobs. | `series_id`, `language`, `append`, `credits_page` | `readOnlyHint`, `idempotentHint` |
+| `tmdb_get_season` | Season episodes, directing and writing credits, and optional guest appearances. | `series_id`, `season_number`, `language`, `include_guest_stars` | `readOnlyHint`, `idempotentHint` |
 | `tmdb_get_person` | Person detail by id. Biography, birth/death, place of birth, known-for department, and paged `combined_credits` as cast and crew. | `person_id`, `language`, `credits_page` | `readOnlyHint`, `idempotentHint` |
 | `tmdb_discover_titles` | Filtered title discovery (movie or tv). Genre(s), release-year range, vote range, vote-count floor, cast/crew (movie), network (tv), watch providers + region, language, runtime, sort (popularity/revenue/vote/date). The power-query entry point. | `media_type`, `sort_by`, `with_genres`, `year`/`release_date_*`, `vote_average_*`, `vote_count_gte`, `with_cast`, `with_crew`, `with_networks`, `with_watch_providers`+`watch_region`, `with_original_language`, `runtime_*`, `page` | `readOnlyHint`, `openWorldHint` |
 | `tmdb_get_trending` | Trending movies, TV, or people for the day or week. Ranked entities with standard summary fields. | `media_type`, `time_window`, `language`, `page` | `readOnlyHint`, `openWorldHint` |
@@ -82,7 +82,7 @@ MCP-side auth (`MCP_AUTH_MODE`) is `none` by default — this is a public read-o
 
 | Service | Wraps | Used By |
 |:--------|:------|:--------|
-| `TmdbService` | TMDB v3 REST (`/search/*`, `/movie/{id}`, `/tv/{id}`, `/tv/{id}/season/{n}`, `/person/{id}`, `/discover/*`, `/trending/*`, `/*/watch/providers`, `/configuration`, `/genre/*/list`) | All tools + resources |
+| `TmdbService` | TMDB v3 REST (`/search/*`, `/movie/{id}`, `/tv/{id}`, `/tv/{id}/season/{n}`, `/person/{id}`, `/discover/*`, `/trending/*`, `/collection/{id}`, `/configuration`, `/genre/*/list`) | All tools + resources |
 
 Single service. All endpoints share base URL, Bearer auth, retry/timeout config, and the image/genre cache. No benefit to splitting.
 
@@ -203,12 +203,12 @@ Every tool populates an `enrichment` block (the success-path counterpart to `err
 |:-----|:-----------------|:---------------------|
 | `tmdb_search_titles` | `GET /search/multi` (mode=multi) · `/search/movie` · `/search/tv` · `/search/person` | — (search does not support append) |
 | `tmdb_get_movie` | `GET /movie/{movie_id}` | `credits,videos,recommendations,similar,keywords,external_ids,release_dates` |
-| `tmdb_get_show` | `GET /tv/{series_id}` | `credits,videos,recommendations,similar,keywords,external_ids,content_ratings` |
+| `tmdb_get_show` | `GET /tv/{series_id}` | `aggregate_credits,videos,recommendations,similar,keywords,external_ids,content_ratings` |
 | `tmdb_get_season` | `GET /tv/{series_id}/season/{season_number}` | `credits` (gives season-level regular cast; guest stars are already in each episode object without append). `series_id` is NOT in the API response — echo it from the input parameter. Season root also includes `vote_average` (season aggregate). |
 | `tmdb_get_person` | `GET /person/{person_id}` | `combined_credits,external_ids` |
 | `tmdb_discover_titles` | `GET /discover/movie` · `GET /discover/tv` | — (discover does not support append). Range/filter param translation: Zod snake_case fields → API dot-notation (e.g. `vote_count_gte` → `vote_count.gte`). Array fields: `with_genres`/`without_genres` joined with `,`; `with_cast`/`with_crew`/`with_networks`/`with_watch_providers` joined with `|`. |
 | `tmdb_get_trending` | `GET /trending/{all\|movie\|tv\|person}/{day\|week}` | — |
-| `tmdb_get_watch_providers` | `GET /movie/{id}/watch/providers` · `GET /tv/{id}/watch/providers` | — |
+| `tmdb_get_watch_providers` | `GET /{movie,tv}/{id}` | `watch/providers` alongside localized title details |
 | Startup cache | `GET /configuration` · `GET /genre/movie/list` · `GET /genre/tv/list` | — |
 
 **Detail tools do NOT append `watch/providers`.** Watch data is region-specific and the detail tools take no region; appending it would return TMDB's full all-countries blob (large, and easy to misread as global). Region-scoped availability is the dedicated `tmdb_get_watch_providers` tool's job. The detail tools mention this in their description.
@@ -273,7 +273,7 @@ z.object({
 
 ### `tmdb_get_movie`
 
-**Purpose:** full movie detail in one call.
+**Purpose:** Movie detail and paged credits. Collection membership is included when available. The opt-in `collection` append fetches the franchise’s films in release-date order.
 
 **Input:**
 ```ts
@@ -282,15 +282,16 @@ z.object({
     .describe('TMDB movie id (integer). Obtain it from tmdb_search_titles (mode "movie" or "multi") or tmdb_discover_titles.'),
   language: z.string().optional()
     .describe('Response language (ISO 639-1[-COUNTRY]). Defaults to the server-configured language.'),
-  append: z.array(z.enum(['credits','videos','recommendations','similar','keywords','external_ids','release_dates']))
+  append: z.array(z.enum(['credits','videos','recommendations','similar','keywords','external_ids','release_dates','collection']))
     .default(['credits','videos','recommendations','similar','keywords','external_ids','release_dates'])
-    .describe('Sub-resources to fold into the single request. Defaults to the full set. Trim it to reduce payload when you only need part of the record (e.g. ["credits"] for cast only).'),
+    .describe('Detail sections to include. Collection parts require a second request.'),
+  credits_page: z.number().int().positive().default(1),
 })
 ```
 
 **Output (key fields):** `id`, `title`, `original_title`, `tagline` (optional), `overview` (optional), `status`, `release_date` (optional), `runtime_minutes` (optional), `genres` (`{id,name}[]`), `vote_average`, `vote_count`, `popularity`, `budget` (optional), `revenue` (optional), `homepage` (optional), `imdb_id` (optional), `us_certification` (optional — from `release_dates`), `poster_url`/`backdrop_url` (optional), `cast` (optional `{ id, name, character, order, profile_url? }[]`, top ~15), `crew_key` (optional `{ id, name, job, department, profile_url? }[]` — Director/Writer/Screenplay/Producer), `trailers` (optional `{ name, key, url, type, site }[]` — YouTube), `recommendations`/`similar` (optional summary-card arrays), `keywords` (optional `{id,name}[]`), `external_ids` (optional object).
 
-Fields gated by `append` are `.optional()` (absent when the key wasn't requested) — the handler guards on presence.
+With credits requested, `cast` and `crew` page independently in TMDB order, up to 15 and 50 rows respectively. `cast_total` and `crew_total` cover every page. The tool returns `credits_page` and, when either list continues, `next_credits_page`. The resource uses the first page. Collection membership includes `id`, `name`, and an optional `poster_url`. An explicit `collection` append adds `parts`. A missing collection during that lookup raises `collection_not_found`.
 
 **Errors:**
 ```ts
@@ -306,9 +307,11 @@ errors: [
 
 **Purpose:** full TV show detail in one call (mirror of `get_movie`).
 
-**Input:** `series_id` (positive int — "TMDB TV series id; from tmdb_search_titles mode \"tv\"/\"multi\" or tmdb_discover_titles."), `language` (optional), `append` (array enum `['credits','videos','recommendations','similar','keywords','external_ids','content_ratings']`, default full set).
+**Input:** `series_id` (positive int — "TMDB TV series id; from tmdb_search_titles mode \"tv\"/\"multi\" or tmdb_discover_titles."), `language` (optional), `append` (array enum `['credits','videos','recommendations','similar','keywords','external_ids','content_ratings']`, default full set). `credits_page` defaults to 1. The `credits` option requests TMDB’s `aggregate_credits` for the entire series.
 
 **Output (key fields):** `id`, `name`, `original_name`, `tagline` (optional), `overview` (optional), `status`, `first_air_date`/`last_air_date` (optional), `number_of_seasons`, `number_of_episodes`, `episode_run_time` (optional number[]), `genres`, `vote_average`, `vote_count`, `popularity`, `homepage` (optional), `in_production` (bool), `type` (optional), `us_content_rating` (optional — from `content_ratings`), `poster_url`/`backdrop_url` (optional), `created_by` (optional `{ id, name, profile_url? }[]`), `networks` (optional `{ id, name, logo_url?, origin_country }[]`), `seasons` (`{ season_number, name, episode_count, air_date?, overview?, poster_url? }[]` — "Pass season_number to tmdb_get_season for the episode list."), `last_episode_to_air`/`next_episode_to_air` (optional episode summaries), `cast`/`crew_key`/`trailers`/`recommendations`/`similar`/`keywords`/`external_ids` (optional, as in `get_movie`).
+
+Cast `roles` and crew `jobs` preserve TMDB’s groupings and episode counts. `cast`, `crew`, and their totals follow movie detail paging. The TV resource returns the first page.
 
 **Errors:**
 ```ts
@@ -328,6 +331,7 @@ errors: [
 z.object({
   series_id: z.number().int().positive()
     .describe('TMDB TV series id (from tmdb_search_titles or tmdb_get_show).'),
+  include_guest_stars: z.boolean().default(false),
   season_number: z.number().int().min(0)
     .describe('Season number. 0 is the "Specials" season on TMDB. Discover valid season numbers from tmdb_get_show (seasons[].season_number).'),
   language: z.string().optional()
@@ -335,9 +339,9 @@ z.object({
 })
 ```
 
-**Output:** `series_id` (echoed from input — the TMDB season endpoint does not return this field), `season_number`, `name`, `overview` (optional), `air_date` (optional), `vote_average` (optional — season-level aggregate, present in the raw response), `poster_url` (optional), `episodes[]` where each: `episode_number`, `name`, `overview` (optional), `air_date` (optional), `runtime_minutes` (optional, from `runtime`), `vote_average` (optional), `still_url` (optional), `guest_stars` (optional `{ id, name, character, profile_url? }[]`).
+**Output:** Season identity, synopsis, air date, rating, poster, regular cast, and episodes in TMDB order. Episodes include their number and name plus the available ID, type, overview, air date, runtime, vote average, vote count, still URL, and crew for Director, Writer, Teleplay, and Story.
 
-> **Note:** Guest stars are embedded per-episode in the season response *without* any append. The season-level `credits` append (`tmdb_get_season` endpoint table row) adds the season's *regular* cast (small recurring set, e.g. 6 entries for BB S1), which is distinct from per-episode guest stars. Both are worth including: regular cast from the append, guest stars from each episode object. The `credits` append does NOT change or add to the per-episode `guest_stars` array.
+The season request already supplies each episode’s crew and guest stars. `include_guest_stars` defaults to false and selects per-episode guest stars for output. The `credits` append supplies the season’s regular cast independently.
 
 **Errors:**
 ```ts
@@ -356,7 +360,7 @@ errors: [
 
 **Output:** `id`, `name`, `biography` (optional), `birthday` (optional), `deathday` (optional), `place_of_birth` (optional), `known_for_department` (optional), `also_known_as` (optional string[]), `gender` (optional — mapped to a label: `0`→unknown,`1`→female,`2`→male,`3`→non-binary), `popularity`, `homepage` (optional), `imdb_id` (optional — **present in the root person response without any append**; `external_ids` append adds wikidata_id, facebook_id, instagram_id, tiktok_id, twitter_id, youtube_id for cross-platform chaining), `profile_url` (optional), `cast_credits` (`{ id, media_type, title, character?, release_year?, vote_average?, poster_url? }[]` — from `combined_credits.cast`), `crew_credits` (`{ id, media_type, title, job, department, release_year?, poster_url? }[]` — from `combined_credits.crew`), `external_ids` (optional object — full social/platform id set from the append).
 
-Credits sort by `release_year` descending, unknown years last, retaining upstream order for equal years. `credits_page` is a positive integer defaulting to 1 and selects 50 credits independently from each sorted list. Sorting precedes slicing so the first page preserves the existing ordering. One upstream combined-credit request serves each invocation; no additional request is needed to select a slice. The tool returns `credits_page`, full `cast_credits_total`/`crew_credits_total`, and `next_credits_page` only while either list has remaining entries. Truncation enrichment describes the current page and provides an executable `tmdb_get_person` call including any supplied language. Empty and past-end pages succeed without a next-page notice. The person resource keeps its first-page record and URI without the tool-only pagination fields.
+TV cast and crew use the person’s first credited air date, falling back to the series premiere, and include `episode_count` when known. Credits sort by `release_year` descending, unknown years last, retaining upstream order for equal years. `credits_page` is a positive integer defaulting to 1 and selects 50 credits independently from each sorted list. Sorting precedes slicing so the first page preserves the existing ordering. One upstream combined-credit request serves each invocation; no additional request is needed to select a slice. The tool returns `credits_page`, full `cast_credits_total`/`crew_credits_total`, and `next_credits_page` only while either list has remaining entries. Truncation enrichment describes the current page and provides an executable `tmdb_get_person` call including any supplied language. Empty and past-end pages succeed without a next-page notice. The person resource keeps its first-page record and URI without the tool-only pagination fields.
 
 **Errors:**
 ```ts
@@ -465,7 +469,7 @@ z.object({
 
 ### `tmdb_get_watch_providers`
 
-**Purpose:** where a title streams, for one region. Also available inline via `get_movie`/`get_show` append — but this tool scopes to a region and surfaces the TMDB link.
+**Purpose:** Identify the resolved movie or show and report TMDB’s provider listings for the requested region.
 
 **Input:**
 ```ts
@@ -484,6 +488,9 @@ z.object({
 z.object({
   id: z.number().describe('The title id queried.'),
   media_type: z.enum(['movie', 'tv']),
+  title: z.string().optional(),
+  release_year: z.number().optional(),
+  available_regions: z.array(z.string()),
   region: z.string().describe('The ISO 3166-1 region the availability applies to.'),
   link: z.string().optional().describe('TMDB JustWatch-backed page for this title/region — the supported way to reach actual deep links. Absent when TMDB has no provider data for the region.'),
   flatrate: z.array(ProviderSchema).describe('Subscription/streaming-included providers. Empty when none.'),
@@ -567,7 +574,8 @@ Each step is independently testable against real API responses, including a spar
 | `GET /person/{id}?append_to_response=combined_credits,external_ids&language=` | Person detail + filmography |
 | `GET /discover/{movie,tv}?sort_by=&with_genres=&vote_count.gte=&…` | Filtered discovery |
 | `GET /trending/{all,movie,tv,person}/{day,week}?language=&page=` | Trending |
-| `GET /{movie,tv}/{id}/watch/providers` | Region-keyed streaming availability |
+| `GET /{movie,tv}/{id}?append_to_response=watch/providers&language=` | Localized identity and region-keyed streaming availability |
+| `GET /collection/{id}?language=` | Localized franchise parts requested by the movie tool |
 | `GET /configuration` | Image base + sizes (cached at startup) |
 | `GET /genre/{movie,tv}/list?language=` | Genre id→name maps (cached at startup) |
 
@@ -594,7 +602,7 @@ Non-200 responses carry `{ "success": false, "status_code": <int>, "status_messa
 | **Image sizes are NOT a tool input** | Sensible per-field defaults (`w500`/`w780`/`w185`/`w300`/`w92`) cover the agent/display use case. Exposing a size enum per image field would bloat every schema for a rare need; agents that want another size can rebuild the URL from the documented base. (Revisit only if a real use case appears.) |
 | **`tmdb_get_watch_providers` is a standalone tool even though detail tools can append it** | Watch data is region-specific and the detail tools take no region. A standalone tool forces the region to be a conscious input, scopes the response to one country, and surfaces the TMDB `link`. Appending all-countries provider data to `get_movie` would be a large blob easily misread as global. |
 | **Detail tools append credits/videos/recommendations/similar/keywords/external_ids + (release_dates\|content_ratings), but NOT watch/providers** | These collapse the common "tell me about this title" follow-ups into one HTTP call without a region dependency. `release_dates`/`content_ratings` supply the US certification. Watch/providers is excluded for the region reason above. |
-| **`append` is an exposed, defaulted array on `get_movie`/`get_show`; fixed on `get_person`** | Movies/shows have a genuine "I only need cast" case worth a trim knob, and the default is the full set so the simple call is rich. A person dossier always wants `combined_credits` + `external_ids`, so exposing the knob there is needless surface. |
+| **Movies and shows expose `append`. A person always requests combined credits and external IDs.** | Callers can select title sections. Movie collection parts require a second upstream call, so the default returns only the collection metadata in the movie response. |
 | **`mode` enum on `tmdb_search_titles` instead of four search tools** | `/search/{multi,movie,tv,person}` are the same workflow ("find a title/person") differing only by type filter. One tool with a `mode` enum tightens the surface and matches the openlibrary precedent (one search entry point). |
 | **`media_type` parameter on discover/trending/watch-providers instead of per-type tools** | Same reasoning — `discover/movie` vs `discover/tv` are one workflow; the endpoint differs by a path segment. A `media_type` enum keeps the surface at 8 tools instead of 11+. |
 | **`vote_count_gte` called out in prose as the quality gate** | The most common discover mistake is sorting by `vote_average.desc` and getting 10.0-from-2-votes noise. The parameter description names the fix explicitly so the agent reaches for it. |

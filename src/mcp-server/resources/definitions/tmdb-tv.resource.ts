@@ -1,6 +1,6 @@
 /**
  * @fileoverview tmdb://tv/{series_id} — show detail by id as injectable context.
- * Resolves through the same service method as tmdb_get_show with the full append set.
+ * Resolves through tmdb_get_show's service with default appends and first-page credits.
  * @module mcp-server/resources/definitions/tmdb-tv.resource
  */
 
@@ -22,7 +22,7 @@ export const tmdbTvResource = resource('tmdb://tv/{series_id}', {
   name: 'tmdb-tv',
   title: 'TMDB show detail',
   description:
-    'Full TV show detail by TMDB series id, as injectable context for chat about a specific series. Same enriched record as tmdb_get_show (all sub-resources appended).',
+    'TV show detail by TMDB series id, with the first 15 series-wide cast and 50 crew credits, grouped roles and jobs, episode counts, and full totals. Use tmdb_get_show credits_page to retrieve later credits.',
   mimeType: 'application/json',
   params: z.object({
     series_id: z

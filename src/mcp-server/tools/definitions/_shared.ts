@@ -7,7 +7,13 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
-import { escapeMarkdownInline, markdownImage, markdownLink } from '@cyanheads/mcp-ts-core/utils';
+import {
+  escapeMarkdownInline,
+  markdown,
+  markdownImage,
+  markdownLink,
+} from '@cyanheads/mcp-ts-core/utils';
+import { CAST_CREDITS_PAGE_SIZE, CREW_CREDITS_PAGE_SIZE } from '@/services/tmdb/tmdb-service.js';
 
 /** Mandatory TMDB attribution string, surfaced in every tool's enrichment. */
 export const TMDB_ATTRIBUTION =
@@ -100,7 +106,107 @@ export const CrewMemberSchema = z
     department: z.string().optional().describe('Department. Omitted when absent.'),
     profile_url: z.string().optional().describe('Full profile image URL. Omitted when none.'),
   })
-  .describe('A key crew member (Director/Writer/Screenplay/Story/Producer/Creator).');
+  .describe('A crew member and their credited job.');
+
+export const SeriesCastMemberSchema = CastMemberSchema.extend({
+  roles: z
+    .array(
+      z
+        .object({
+          character: z.string().describe('Character played in the credited episodes.'),
+          episode_count: z.number().describe('Episodes credited for this role.'),
+        })
+        .describe('A role and its episode count.'),
+    )
+    .optional()
+    .describe('Series-wide roles, in TMDB order. Omitted when absent.'),
+  total_episode_count: z
+    .number()
+    .optional()
+    .describe('Total credited episodes. Omitted when absent.'),
+}).describe('A series cast member with aggregate roles.');
+
+export const SeriesCrewMemberSchema = CrewMemberSchema.extend({
+  jobs: z
+    .array(
+      z
+        .object({
+          job: z.string().describe('Job on the credited episodes.'),
+          episode_count: z.number().describe('Episodes credited for this job.'),
+        })
+        .describe('A job and its episode count.'),
+    )
+    .optional()
+    .describe('Series-wide jobs, in TMDB order. Omitted when absent.'),
+  total_episode_count: z
+    .number()
+    .optional()
+    .describe('Total credited episodes. Omitted when absent.'),
+}).describe('A series crew member with aggregate jobs.');
+
+/** The title detail tools slice the lists independently at the service's page sizes. */
+export const titleCreditsPageInput = z
+  .number()
+  .int()
+  .positive()
+  .default(1)
+  .describe(
+    `Credits page (1-indexed), up to ${CAST_CREDITS_PAGE_SIZE} cast and ${CREW_CREDITS_PAGE_SIZE} crew rows independently. Applies when append includes "credits". Past-end pages return empty lists.`,
+  );
+
+export const titleCreditsPageFields = {
+  cast_total: z
+    .number()
+    .optional()
+    .describe('Total cast rows across all pages. Present when credits requested.'),
+  crew_total: z
+    .number()
+    .optional()
+    .describe('Total crew rows across all pages. Present when credits requested.'),
+  credits_page: z
+    .number()
+    .optional()
+    .describe('Current credits page (1-indexed). Present when credits requested.'),
+  next_credits_page: z
+    .number()
+    .optional()
+    .describe('Next page if either credits list has more rows.'),
+};
+
+/** Derives the current page and continuation from the total rows actually served. */
+export function titleCreditsPage(
+  { cast_total, crew_total }: { cast_total?: number | undefined; crew_total?: number | undefined },
+  credits_page: number,
+): { credits_page?: number; next_credits_page?: number } {
+  if (cast_total === undefined || crew_total === undefined) return {};
+  const hasNext =
+    cast_total > credits_page * CAST_CREDITS_PAGE_SIZE ||
+    crew_total > credits_page * CREW_CREDITS_PAGE_SIZE;
+  return { credits_page, ...(hasNext ? { next_credits_page: credits_page + 1 } : {}) };
+}
+
+/** Presents the same executable continuation as a copyable code span. */
+export const titleCreditsNoticeTrailer = {
+  notice: {
+    render: (call: string) => markdown().text('Continue with ').inlineCode(call).text('.').build(),
+  },
+};
+
+/** Writes page numbers and totals, including zeros on an empty page. */
+export function renderTitleCreditsPage(result: {
+  credits_page?: number | undefined;
+  next_credits_page?: number | undefined;
+  cast_total?: number | undefined;
+  crew_total?: number | undefined;
+}): string[] {
+  const { credits_page, next_credits_page, cast_total, crew_total } = result;
+  if (credits_page === undefined) return [];
+  const fields = [`Credits page: ${credits_page}`];
+  if (cast_total !== undefined) fields.push(`Cast total: ${cast_total}`);
+  if (crew_total !== undefined) fields.push(`Crew total: ${crew_total}`);
+  if (next_credits_page !== undefined) fields.push(`Next credits page: ${next_credits_page}`);
+  return [fields.join(' | ')];
+}
 
 export const TrailerSchema = z
   .object({
@@ -133,8 +239,8 @@ export const ProviderSchema = z
  */
 
 type SummaryItem = z.infer<typeof SummaryItemSchema>;
-type CastMember = z.infer<typeof CastMemberSchema>;
-type CrewMember = z.infer<typeof CrewMemberSchema>;
+type CastMember = z.infer<typeof SeriesCastMemberSchema>;
+type CrewMember = z.infer<typeof SeriesCrewMemberSchema>;
 type Trailer = z.infer<typeof TrailerSchema>;
 type Provider = z.infer<typeof ProviderSchema>;
 type Genre = z.infer<typeof GenreSchema>;
@@ -177,6 +283,13 @@ export function renderCast(c: CastMember): string {
   parts.push(')');
   let line = parts.join('');
   if (c.character) line += ` as ${escapeMarkdownInline(c.character)}`;
+  if (c.roles !== undefined) {
+    const roles = c.roles.map(
+      (role) => `${escapeMarkdownInline(role.character)} (${episodes(role.episode_count)})`,
+    );
+    line += ` — roles: ${roles.join(', ') || 'none'}`;
+  }
+  if (c.total_episode_count !== undefined) line += ` — ${episodes(c.total_episode_count)} total`;
   if (c.profile_url) line += ` — ${markdownImage('profile', c.profile_url)}`;
   return line;
 }
@@ -185,8 +298,19 @@ export function renderCast(c: CastMember): string {
 export function renderCrew(c: CrewMember): string {
   let line = `${escapeMarkdownInline(c.name)} — ${escapeMarkdownInline(c.job)} (id ${c.id})`;
   if (c.department) line += ` [${escapeMarkdownInline(c.department)}]`;
+  if (c.jobs !== undefined) {
+    const jobs = c.jobs.map(
+      (job) => `${escapeMarkdownInline(job.job)} (${episodes(job.episode_count)})`,
+    );
+    line += ` — jobs: ${jobs.join(', ') || 'none'}`;
+  }
+  if (c.total_episode_count !== undefined) line += ` — ${episodes(c.total_episode_count)} total`;
   if (c.profile_url) line += ` — ${markdownImage('profile', c.profile_url)}`;
   return line;
+}
+
+function episodes(count: number): string {
+  return `${count} ${count === 1 ? 'episode' : 'episodes'}`;
 }
 
 /** Complete trailer rendering. */

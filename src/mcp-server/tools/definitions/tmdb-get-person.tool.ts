@@ -18,7 +18,16 @@ const PersonCastCreditSchema = z
     media_type: MediaTypeSchema,
     title: z.string().describe('Title or name of the credit.'),
     character: z.string().optional().describe('Character played. Omitted when absent.'),
-    release_year: z.number().optional().describe('Release/first-air year. Omitted when unknown.'),
+    release_year: z
+      .number()
+      .optional()
+      .describe(
+        'Movie release year or TV first-credit year (series premiere as fallback). Omitted when unknown.',
+      ),
+    episode_count: z
+      .number()
+      .optional()
+      .describe('TV episodes credited by TMDB. Omitted when unknown.'),
     vote_average: z.number().optional().describe('Average rating, 0–10. Omitted when absent.'),
     poster_url: z.string().optional().describe('Full poster URL. Omitted when none.'),
   })
@@ -33,7 +42,16 @@ const PersonCrewCreditSchema = z
     title: z.string().describe('Title or name of the credit.'),
     job: z.string().describe('Job (e.g. "Director", "Writer").'),
     department: z.string().optional().describe('Department. Omitted when absent.'),
-    release_year: z.number().optional().describe('Release/first-air year. Omitted when unknown.'),
+    release_year: z
+      .number()
+      .optional()
+      .describe(
+        'Movie release year or TV first-credit year (series premiere as fallback). Omitted when unknown.',
+      ),
+    episode_count: z
+      .number()
+      .optional()
+      .describe('TV episodes credited by TMDB. Omitted when unknown.'),
     poster_url: z.string().optional().describe('Full poster URL. Omitted when none.'),
   })
   .describe('A crew credit from the combined filmography.');
@@ -41,7 +59,7 @@ const PersonCrewCreditSchema = z
 export const tmdbGetPerson = tool('tmdb_get_person', {
   title: 'tmdb-mcp-server: get person',
   description:
-    'Fetch person detail and filmography by TMDB person id. Returns biography, birth/death dates, place of birth, known-for department, aliases, gender, and combined cast and crew credits. credits_page selects 50 entries per list, ordered by release year descending with unknown years last; ties keep TMDB order. Totals and next_credits_page support retrieving every credit. Also returns IMDb and cross-platform ids (Wikidata, social handles).',
+    'Fetch person detail and filmography by TMDB person id. Returns biography, birth/death dates, place of birth, known-for department, aliases, gender, and combined cast and crew credits. credits_page selects 50 entries per list, ordered newest first by movie release year or TV first-credit year (series premiere as fallback). Unknown years sort last and ties keep TMDB order. TV credits include episode counts when supplied. Totals and next_credits_page support retrieving every credit. Also returns IMDb and cross-platform ids (Wikidata, social handles).',
   annotations: { readOnlyHint: true, idempotentHint: true },
   input: z.object({
     credits_page: z
@@ -97,12 +115,12 @@ export const tmdbGetPerson = tool('tmdb_get_person', {
     cast_credits: z
       .array(PersonCastCreditSchema)
       .describe(
-        'Current cast filmography page (up to 50, release-year descending; ties keep TMDB order).',
+        'Current cast filmography page (up to 50, credit year descending; ties keep TMDB order).',
       ),
     crew_credits: z
       .array(PersonCrewCreditSchema)
       .describe(
-        'Current crew filmography page (up to 50, release-year descending; ties keep TMDB order).',
+        'Current crew filmography page (up to 50, credit year descending; ties keep TMDB order).',
       ),
     cast_credits_total: z.number().describe('Total cast credits across all pages.'),
     crew_credits_total: z.number().describe('Total crew credits across all pages.'),
@@ -197,20 +215,28 @@ export const tmdbGetPerson = tool('tmdb_get_person', {
     lines.push(`\n**Cast credits** (${p.cast_credits.length} of ${p.cast_credits_total}):`);
     for (const c of p.cast_credits) {
       const yr = c.release_year ? ` (${c.release_year})` : '';
+      const episodes =
+        c.episode_count === undefined
+          ? ''
+          : ` (${c.episode_count} episode${c.episode_count === 1 ? '' : 's'})`;
       const rating = c.vote_average !== undefined ? ` ★${c.vote_average.toFixed(1)}` : '';
       const poster = c.poster_url ? ` ${markdownImage('poster', c.poster_url)}` : '';
       lines.push(
-        `- ${escapeMarkdownInline(c.title)}${yr} [${c.media_type}, id ${c.id}]${c.character ? ` as ${escapeMarkdownInline(c.character)}` : ''}${rating}${poster}`,
+        `- ${escapeMarkdownInline(c.title)}${yr} [${c.media_type}, id ${c.id}]${c.character ? ` as ${escapeMarkdownInline(c.character)}` : ''}${episodes}${rating}${poster}`,
       );
     }
 
     lines.push(`\n**Crew credits** (${p.crew_credits.length} of ${p.crew_credits_total}):`);
     for (const c of p.crew_credits) {
       const yr = c.release_year ? ` (${c.release_year})` : '';
+      const episodes =
+        c.episode_count === undefined
+          ? ''
+          : ` (${c.episode_count} episode${c.episode_count === 1 ? '' : 's'})`;
       const dept = c.department ? `, ${escapeMarkdownInline(c.department)}` : '';
       const poster = c.poster_url ? ` ${markdownImage('poster', c.poster_url)}` : '';
       lines.push(
-        `- ${escapeMarkdownInline(c.title)}${yr} [${c.media_type}, id ${c.id}] — ${escapeMarkdownInline(c.job)}${dept}${poster}`,
+        `- ${escapeMarkdownInline(c.title)}${yr} [${c.media_type}, id ${c.id}] — ${escapeMarkdownInline(c.job)}${dept}${episodes}${poster}`,
       );
     }
 

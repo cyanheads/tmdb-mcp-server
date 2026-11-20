@@ -14,7 +14,7 @@ import { CastMemberSchema, detailEnrichment, renderCast, TMDB_ATTRIBUTION } from
 export const tmdbGetSeason = tool('tmdb_get_season', {
   title: 'tmdb-mcp-server: get season',
   description:
-    'Fetch the episode list for one season of a TV show. Returns episode names, air dates, overviews, runtimes, vote averages, still URLs, and per-episode guest stars, plus the season\'s regular recurring cast. Bridges the show-level summary (tmdb_get_show) and per-episode detail. Discover valid season numbers from tmdb_get_show (seasons[].season_number); season 0 is "Specials".',
+    'Fetch the episode list for one season of a TV show. Returns episode ids, names, air dates, overviews, runtimes, votes, episode types, still URLs, and directing and writing credits where available, plus the season\'s regular cast. Set include_guest_stars to true for per-episode guest stars. Discover valid season numbers from tmdb_get_show (seasons[].season_number). Season 0 is "Specials".',
   annotations: { readOnlyHint: true, idempotentHint: true },
   input: z.object({
     series_id: z
@@ -35,6 +35,10 @@ export const tmdbGetSeason = tool('tmdb_get_season', {
       .describe(
         'Response language (ISO 639-1[-COUNTRY]). Defaults to the server-configured language.',
       ),
+    include_guest_stars: z
+      .boolean()
+      .default(false)
+      .describe('Include per-episode guest stars. The season regular cast is independent.'),
   }),
   output: z.object({
     series_id: z
@@ -60,6 +64,7 @@ export const tmdbGetSeason = tool('tmdb_get_season', {
         z
           .object({
             episode_number: z.number().describe('Episode number within the season.'),
+            id: z.number().optional().describe('TMDB episode id. Omitted when absent.'),
             name: z.string().describe('Episode title.'),
             overview: z.string().optional().describe('Episode synopsis. Omitted when absent.'),
             air_date: z.string().optional().describe('Air date (YYYY-MM-DD). Omitted when absent.'),
@@ -71,11 +76,32 @@ export const tmdbGetSeason = tool('tmdb_get_season', {
               .number()
               .optional()
               .describe('Average rating, 0–10. Omitted when absent.'),
+            vote_count: z.number().optional().describe('Number of votes. Omitted when absent.'),
+            episode_type: z
+              .string()
+              .optional()
+              .describe('Episode type exactly as reported by TMDB. Omitted when absent.'),
+            crew: z
+              .array(
+                z
+                  .object({
+                    id: z.number().describe('TMDB person id.'),
+                    name: z.string().describe('Credited person name.'),
+                    job: z
+                      .string()
+                      .describe('Credited job (Director, Writer, Teleplay, or Story).'),
+                  })
+                  .describe('A person credited for directing or writing this episode.'),
+              )
+              .optional()
+              .describe(
+                'Episode directing and writing credits, in TMDB order. Omitted when absent.',
+              ),
             still_url: z.string().optional().describe('Full still image URL. Omitted when none.'),
             guest_stars: z
               .array(CastMemberSchema)
               .optional()
-              .describe('Guest stars in this episode (embedded per-episode). Omitted when none.'),
+              .describe('Guest stars in this episode. Omitted unless requested and available.'),
           })
           .describe('An episode in the season.'),
       )
@@ -99,6 +125,7 @@ export const tmdbGetSeason = tool('tmdb_get_season', {
       input.season_number,
       ctx,
       input.language,
+      input.include_guest_stars,
     );
     ctx.enrich({ attribution: TMDB_ATTRIBUTION });
     return season;
@@ -121,14 +148,28 @@ export const tmdbGetSeason = tool('tmdb_get_season', {
     lines.push('\n**Episodes:**');
     for (const e of s.episodes) {
       const facts2: string[] = [];
+      if (e.id !== undefined) facts2.push(`id ${e.id}`);
       if (e.air_date) facts2.push(escapeMarkdownInline(e.air_date));
       if (e.runtime_minutes !== undefined) facts2.push(`${e.runtime_minutes} min`);
       if (e.vote_average !== undefined) facts2.push(`★${e.vote_average.toFixed(1)}`);
+      if (e.vote_count !== undefined) facts2.push(`${e.vote_count} votes`);
+      if (e.episode_type !== undefined) facts2.push(escapeMarkdownInline(e.episode_type));
       lines.push(
         `**E${e.episode_number}: ${escapeMarkdownInline(e.name)}**${facts2.length ? ` (${facts2.join(', ')})` : ''}`,
       );
       if (e.overview) lines.push(escapeMarkdownInline(e.overview));
       if (e.still_url) lines.push(markdownImage('still', e.still_url));
+      if (e.crew?.length) {
+        lines.push(
+          '**Crew:**',
+          ...e.crew.map(
+            (c) =>
+              `- ${escapeMarkdownInline(c.name)} (id ${c.id}) — ${escapeMarkdownInline(c.job)}`,
+          ),
+        );
+      } else if (e.crew) {
+        lines.push('**Crew:** None');
+      }
       if (e.guest_stars?.length) {
         lines.push('**Guest stars:**', ...e.guest_stars.map((g) => `- ${renderCast(g)}`));
       }

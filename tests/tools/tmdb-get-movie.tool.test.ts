@@ -5,7 +5,7 @@
  */
 
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   initServiceForTools,
@@ -80,6 +80,7 @@ describe('tmdbGetMovie', () => {
       imdb_id: 'tt0137523',
     });
     expect(movie.cast?.[0]?.name).toBe('Brad Pitt');
+    expect(movie.cast?.[0]).toMatchObject({ id: 287, character: 'Tyler Durden', order: 0 });
     expect(movie.crew_key?.[0]?.job).toBe('Director');
     expect(movie.trailers?.[0]?.url).toBe('https://www.youtube.com/watch?v=abc123');
     expect(movie.poster_url).toBe('https://image.tmdb.org/t/p/w500/poster.jpg');
@@ -98,7 +99,7 @@ describe('tmdbGetMovie', () => {
       data: {
         reason: 'movie_not_found',
         // Recovery reaches data.recovery.hint → surfaced on both client surfaces.
-        recovery: { hint: tmdbGetMovie.errors![0]!.recovery },
+        recovery: { hint: expect.stringContaining('Verify the id with tmdb_search_titles') },
       },
     });
   });
@@ -148,5 +149,164 @@ describe('tmdbGetMovie', () => {
     expect(text).toContain('youtube.com');
     expect(text).toContain('Se7en');
     expect(text).toContain('R'); // certification
+  });
+});
+
+describe('movie credits and collection contract', () => {
+  const membership = { id: 87359, name: 'Mission: Impossible Collection', poster_path: '/mi.jpg' };
+
+  it('includes collection metadata by default and orders explicitly requested parts', async () => {
+    await initServiceForTools({
+      '/movie/954': {
+        ...FIGHT_CLUB,
+        id: 954,
+        title: 'Mission: Impossible',
+        belongs_to_collection: membership,
+      },
+      '/collection/87359?language=fr-FR': {
+        id: 87359,
+        parts: [
+          { id: 575265, title: 'The Final Reckoning', release_date: '2025-05-23' },
+          { id: 12, title: 'Undated' },
+          { id: 575264, title: 'Dead Reckoning', release_date: '2023-07-12' },
+          { id: 13, title: 'Same Date', release_date: '2023-07-12' },
+        ],
+      },
+    });
+    const defaultResult = await runToolContract(tmdbGetMovie, { movie_id: 954 });
+    expect(defaultResult.structuredContent).toHaveProperty('collection', {
+      id: 87359,
+      name: 'Mission: Impossible Collection',
+      poster_url: 'https://image.tmdb.org/t/p/w500/mi.jpg',
+    });
+    expect(defaultResult.content[0]).toHaveProperty('text', expect.stringContaining('87359'));
+
+    const result = await runToolContract<Parameters<typeof runToolContract>[0]>(tmdbGetMovie, {
+      movie_id: 954,
+      language: 'fr-FR',
+      append: ['collection'],
+    });
+    expect(result.structuredContent).toHaveProperty('collection.parts', [
+      { id: 575264, title: 'Dead Reckoning', media_type: 'movie', release_year: 2023 },
+      { id: 13, title: 'Same Date', media_type: 'movie', release_year: 2023 },
+      { id: 575265, title: 'The Final Reckoning', media_type: 'movie', release_year: 2025 },
+      { id: 12, title: 'Undated', media_type: 'movie' },
+    ]);
+    expect(result.content[0]).toHaveProperty(
+      'text',
+      expect.stringMatching(
+        /87359[\s\S]*Dead Reckoning[\s\S]*Same Date[\s\S]*The Final Reckoning[\s\S]*Undated/,
+      ),
+    );
+    expect(result.structuredContent).not.toHaveProperty('credits_page');
+  });
+
+  it.each([undefined, null])(
+    'omits absent collection membership (%s) and skips the request',
+    async (belongs_to_collection) => {
+      await initServiceForTools({ '/movie/550': { ...FIGHT_CLUB, belongs_to_collection } });
+      const result = await runToolContract<Parameters<typeof runToolContract>[0]>(tmdbGetMovie, {
+        movie_id: 550,
+        append: ['collection'],
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).not.toHaveProperty('collection');
+      expect(result.content[0]).not.toHaveProperty('text', expect.stringContaining('Collection:'));
+    },
+  );
+
+  it('distinguishes an empty collection and a collection lookup failure', async () => {
+    await initServiceForTools({
+      '/movie/550': { ...FIGHT_CLUB, belongs_to_collection: membership },
+      '/collection/87359': { id: 87359, parts: [] },
+    });
+    const call = () =>
+      runToolContract<Parameters<typeof runToolContract>[0]>(tmdbGetMovie, {
+        movie_id: 550,
+        append: ['collection'],
+      });
+    const empty = await call();
+    expect(empty.structuredContent).toHaveProperty('collection.parts', []);
+    expect(empty.content[0]).toHaveProperty('text', expect.stringContaining('No collection parts'));
+
+    throwForPath('/collection/87359', JsonRpcErrorCode.NotFound);
+    const failed = await call();
+    expect(failed.structuredContent).toMatchObject({
+      error: {
+        code: JsonRpcErrorCode.NotFound,
+        data: {
+          reason: 'collection_not_found',
+          recovery: { hint: expect.stringContaining('without "collection"') },
+        },
+      },
+    });
+    expect(JSON.stringify(failed.content)).toContain('collection_not_found');
+  });
+
+  it('pages independent cast and crew lists and preserves repeated TMDB rows', async () => {
+    const credits = {
+      cast: Array.from({ length: 16 }, (_, index) => ({ id: 20 + index, name: `Cast ${index}` })),
+      crew: [
+        ...Array.from({ length: 49 }, (_, index) => ({
+          id: 40 + index,
+          name: `Crew ${index}`,
+          job: 'Director',
+        })),
+        { id: 100, name: 'Repeat Crew', job: 'Director' },
+        { id: 100, name: 'Repeat Crew', job: 'Editor' },
+      ],
+    };
+    await initServiceForTools({ '/movie/550': { ...FIGHT_CLUB, credits } });
+    const input = {
+      movie_id: 550,
+      append: ['credits', 'videos'] as ('credits' | 'videos')[],
+      language: 'ja-JP',
+    };
+    const first = await runToolContract(tmdbGetMovie, input);
+    expect(first.structuredContent).toMatchObject({
+      credits_page: 1,
+      next_credits_page: 2,
+      cast_total: 16,
+      crew_total: 51,
+    });
+    expect(first.structuredContent).toHaveProperty('cast', credits.cast.slice(0, 15));
+    expect(first.structuredContent).toHaveProperty('crew', credits.crew.slice(0, 50));
+    const nextCall =
+      'tmdb_get_movie({"movie_id":550,"append":["credits","videos"],"language":"ja-JP","credits_page":2})';
+    expect(first.structuredContent).toHaveProperty('notice', nextCall);
+    expect(first.content).toContainEqual(
+      expect.objectContaining({ text: expect.stringContaining(`\`${nextCall}\``) }),
+    );
+    expect(JSON.stringify(first.content)).toContain('Next credits page: 2');
+
+    const second = await runToolContract<Parameters<typeof runToolContract>[0]>(tmdbGetMovie, {
+      ...input,
+      credits_page: 2,
+    });
+    expect(second.structuredContent).toMatchObject({
+      credits_page: 2,
+      cast_total: 16,
+      crew_total: 51,
+      cast: [{ id: 35, name: 'Cast 15' }],
+      crew: [{ id: 100, name: 'Repeat Crew', job: 'Editor' }],
+    });
+    expect(second.structuredContent).not.toHaveProperty('next_credits_page');
+    expect(JSON.stringify(second.content)).toMatch(/Cast 15[\s\S]*Repeat Crew — Editor/);
+
+    const pastEnd = await runToolContract<Parameters<typeof runToolContract>[0]>(tmdbGetMovie, {
+      ...input,
+      credits_page: 3,
+    });
+    expect(pastEnd.structuredContent).toMatchObject({
+      credits_page: 3,
+      cast_total: 16,
+      crew_total: 51,
+      cast: [],
+      crew: [],
+    });
+    expect(pastEnd.structuredContent).not.toHaveProperty('next_credits_page');
+    expect(JSON.stringify(pastEnd.content)).toContain('Credits page: 3');
+    expect(JSON.stringify(pastEnd.content)).toContain('**Cast:**\\nNone on this page.');
+    expect(JSON.stringify(pastEnd.content)).toContain('**Crew:**\\nNone on this page.');
   });
 });
